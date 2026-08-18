@@ -1,0 +1,164 @@
+// PitchArena — veri modeli
+//
+// Tasarım kararı (docs/PLAN.md §4): orkestratör hiçbir şeyi bellekte tutmaz.
+// Her ajan çıktısı ve her olay anında buraya yazılır. Sonuç: tarayıcı kapansa
+// analiz devam eder, sayfa yenilenince kaldığı yerden akar ve her analiz
+// Event tablosundan birebir tekrar oynatılabilir (replay / demo modu).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AnalysisStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+/// Yatırım komitesinin nihai kararı.
+enum Verdict {
+  GO
+  GO_IF
+  NO_GO
+}
+
+/// Tur 3'teki üç yatırımcının bireysel kararı. Ayrışmaları normaldir —
+/// anlaşmazlık endeksi tam olarak bu ayrışmayı ölçer.
+enum InvestorDecision {
+  INVEST
+  PASS
+  FOLLOW_UP
+}
+
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  name      String?
+  image     String?
+  createdAt DateTime   @default(now())
+  analyses  Analysis[]
+}
+
+model Analysis {
+  id       String @id @default(cuid())
+  userId   String?
+  user     User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  ideaText String
+  title    String
+  /// ideaText'in normalize edilmiş hash'i — aynı fikir tekrar gönderilirse
+  /// yeni analiz açmadan mevcut olanı döndürmek için (kota koruması).
+  ideaHash String
+
+  status       AnalysisStatus @default(QUEUED)
+  verdict      Verdict?
+  overallScore Int?
+  /// 0–100. Üç yatırımcının kararları arasındaki ayrışma. Yüksek = tartışmalı fikir.
+  disagreement Int?
+  errorMessage String?
+
+  /// Versiyon zinciri: fikri revize et → tekrar çalıştır → v1 vs v2 skor farkı.
+  parentId String?
+  parent   Analysis?  @relation("AnalysisVersions", fields: [parentId], references: [id], onDelete: SetNull)
+  children Analysis[] @relation("AnalysisVersions")
+  version  Int        @default(1)
+
+  /// Önceden kaydedilmiş, sunumda API'siz oynatılan analiz.
+  isDemo Boolean @default(false)
+  /// Bu analiz simülasyon sağlayıcısıyla mı üretildi? Arayüzde açıkça belirtilir.
+  simulated Boolean @default(false)
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  runs   AgentRun[]
+  scores Score[]
+  events Event[]
+
+  @@index([ideaHash])
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model AgentRun {
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  agentKey String
+  round    Int
+  status   RunStatus @default(PENDING)
+  model    String
+
+  /// Ajanın doğrulanmış yapısal çıktısı. Şema ajan başına farklıdır —
+  /// doğrulama Zod ile kod tarafında yapılır, DB tarafsız kalır.
+  rawJson Json?
+
+  promptTokens Int?
+  outputTokens Int?
+  latencyMs    Int?
+  errorMessage String?
+
+  startedAt DateTime?
+  endedAt   DateTime?
+
+  citations Citation[]
+
+  @@unique([analysisId, agentKey])
+  @@index([analysisId, round])
+}
+
+model Score {
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  dimension String
+  value     Int
+  rationale String
+
+  @@unique([analysisId, dimension])
+}
+
+/// Google Search grounding'den gelen gerçek kaynaklar. "Halüsinasyon mu?"
+/// sorusunu baştan öldürmek için ajan çalıştırmasına bağlı tutulur.
+model Citation {
+  id         String   @id @default(cuid())
+  agentRunId String
+  agentRun   AgentRun @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+
+  url     String
+  title   String
+  snippet String?
+
+  @@index([agentRunId])
+}
+
+/// SSE'nin tek kaynağı. Akış bellekten değil buradan okunur; bu yüzden
+/// yeniden bağlanma, sayfa yenileme ve replay bedavaya gelir.
+model Event {
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  seq       Int
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@unique([analysisId, seq])
+  @@index([analysisId, seq])
+}
