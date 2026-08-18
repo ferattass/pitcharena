@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# env
+.env
+.env.local
+
+# prisma generated client
+/src/generated
+
+# dev logs
+.dev.log
+.dev.err.log
+.playwright-mcp/
