@@ -36,13 +36,6 @@ jobs:
       # ikili dosyalar App Service'in Linux'una uygun sürümde inmeli.
       - run: npm run build
 
-      # `output: "standalone"` sunucuyu ve minimal node_modules'ü üretir ama
-      # statik varlıkları kopyalamak bize kalır.
-      - name: Deploy paketini topla
-        run: |
-          cp -r .next/static .next/standalone/.next/static
-          cp -r public .next/standalone/public
-
       - uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}

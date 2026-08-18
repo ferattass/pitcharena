@@ -56,7 +56,8 @@ GEMINI_API_KEY="..."
 | Komut | Ne yapar |
 |---|---|
 | `npm run dev` | Geliştirme sunucusu (Turbopack) |
-| `npm run build` / `start` | Üretim derlemesi ve sunucusu |
+| `npm run build` | Üretim derlemesi + standalone paketin toplanması (`postbuild`) |
+| `npm start` | Standalone sunucuyu çalıştırır (`.next/standalone/server.js`) |
 | `npm test` | Birim testleri (şema sözleşmeleri, skorlama, olay indirgeyici) |
 | `npm run smoke` | 11 ajanı DB'ye karşı uçtan uca çalıştırır, sunucu gerektirmez |
 | `npm run typecheck` / `lint` | TypeScript ve ESLint |
