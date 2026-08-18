@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    # Testler DB'ye dokunmaz ama `next build` sayfaları derlerken Prisma
+    # istemcisini yükler; şemayı gerçek bir veritabanına karşı doğrulamak
+    # migration'ların bozulmadığını da kanıtlar.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: pitcharena
+          POSTGRES_PASSWORD: pitcharena
+          POSTGRES_DB: pitcharena
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://pitcharena:pitcharena@localhost:5432/pitcharena
+      # GEMINI_API_KEY bilerek tanımlı değil: CI simülasyon sağlayıcısıyla
+      # çalışır, böylece derleme dış bir servise ya da kotaya bağlı olmaz.
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Migration'ları uygula
+        run: npm run db:deploy
+
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
