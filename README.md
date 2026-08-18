@@ -213,7 +213,7 @@ az webapp create -g $RG -p pitcharena-plan -n $APP --runtime "NODE:22-lts"
 az webapp config set -g $RG -n $APP --always-on true --startup-file "node server.js"
 
 az webapp config appsettings set -g $RG -n $APP --settings \
-  DATABASE_URL="postgresql://pitcharena:<PAROLA>@$DB.postgres.database.azure.com:5432/pitcharena?sslmode=require" \
+  DATABASE_URL="postgresql://pitcharena:<PAROLA>@$DB.postgres.database.azure.com:5432/pitcharena?sslmode=verify-full" \
   GEMINI_API_KEY="<anahtar>" \
   NODE_ENV=production \
   SCM_DO_BUILD_DURING_DEPLOYMENT=false   # hazır paket gönderiyoruz, Oryx yeniden derlemesin
@@ -228,8 +228,18 @@ duvarında tanımlı değildir ve her koşuda değişir. Şemayı kendi makinend
 az postgres flexible-server firewall-rule create -g $RG -n $DB \
   --rule-name yerel --start-ip-address <IP> --end-ip-address <IP>
 
-DATABASE_URL="postgresql://...azure.com:5432/pitcharena?sslmode=require" npm run db:deploy
+DATABASE_URL="postgresql://...azure.com:5432/pitcharena?sslmode=verify-full" npm run db:deploy
 ```
+
+### SSL neden `verify-full`
+
+Azure Postgres şifreli bağlantı zorunlu tutar. `sslmode=require` yazmak yanıltıcı olurdu:
+kullandığımız `pg` sürümü `uselibpqcompat` verilmediğinde `require`'ı zaten `verify-full`
+gibi işler, üstelik her açılışta bir deprecation uyarısı basar. Niyeti açık yazmak hem
+uyarıyı susturur hem de sertifika doğrulamasının gerçekten yapıldığını belgeler.
+
+Ek bir kök sertifika dosyası gerekmez: Azure'un zinciri (DigiCert Global Root G2,
+Microsoft RSA Root CA 2017) Node'un gömülü sertifika deposunda mevcuttur.
 
 ### GitHub secret
 
