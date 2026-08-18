@@ -1,0 +1,46 @@
+name: Azure'a deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Üst üste gelen deploy'lar birbirini ezmesin; en sonuncusu kazanır.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+env:
+  AZURE_WEBAPP_NAME: pitcharena
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Derleme runner'da yapılır, yerelde değil: sharp gibi platforma özel
+      # ikili dosyalar App Service'in Linux'una uygun sürümde inmeli.
+      - run: npm run build
+
+      # `output: "standalone"` sunucuyu ve minimal node_modules'ü üretir ama
+      # statik varlıkları kopyalamak bize kalır.
+      - name: Deploy paketini topla
+        run: |
+          cp -r .next/static .next/standalone/.next/static
+          cp -r public .next/standalone/public
+
+      - uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: .next/standalone
