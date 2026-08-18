@@ -98,13 +98,23 @@ export async function runAnalysis(analysisId: string): Promise<void> {
     // ---------------------------------------------------- TUR 3 (3 paralel)
     await emit(analysisId, "round.started", { round: 3, label: ROUND_LABELS[3], agents: agentCards(3) });
 
-    const investorOutputs = await Promise.all(
-      INVESTOR_KEYS.map(async (key) => ({
-        key,
-        name: AGENTS[key].name,
-        output: (await runAgent(analysisId, key, ctx)) as InvestorOutput,
-      })),
+    // Tur 1 gibi toleranslı: yatırımcılar birbirinden bağımsız karar verir, biri
+    // sağlayıcı hatasıyla düşerse kalanların kararı hâlâ geçerli bir sonuçtur.
+    // Anlaşmazlık endeksi en az iki karar ister; altına inince analiz anlamını
+    // yitirir ve durmak, yanıltıcı bir "fikir birliği" göstermekten iyidir.
+    const investorResults = await Promise.all(
+      INVESTOR_KEYS.map(async (key) => {
+        const output = await runAgent(analysisId, key, ctx).catch(() => null);
+        return output === null ? null : { key, name: AGENTS[key].name, output: output as InvestorOutput };
+      }),
     );
+
+    const investorOutputs = investorResults.filter((r) => r !== null);
+    if (investorOutputs.length < 2) {
+      throw new Error(
+        `Tur 3'te 3 yatırımcıdan sadece ${investorOutputs.length} tanesi karar verdi; anlaşmazlık ölçülemez.`,
+      );
+    }
     ctx.investors = investorOutputs;
 
     await emit(analysisId, "round.completed", { round: 3, decisions: investorOutputs.map((i) => i.output.decision) });
