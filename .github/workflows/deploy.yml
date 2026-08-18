@@ -15,6 +15,10 @@ env:
 
 jobs:
   deploy:
+    # Azure kaynakları ve AZURE_WEBAPP_PUBLISH_PROFILE secret'ı hazır olana kadar
+    # iş akışı atlanır (gri), başarısız olmaz (kırmızı). Kurulum bitince repo
+    # ayarlarından `AZURE_READY` değişkenini "true" yapmak deploy'u açar.
+    if: vars.AZURE_READY == 'true'
     runs-on: ubuntu-latest
     environment: production
 

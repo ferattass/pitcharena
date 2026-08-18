@@ -247,8 +247,12 @@ Microsoft RSA Root CA 2017) Node'un gömülü sertifika deposunda mevcuttur.
 az webapp deployment list-publishing-profiles -g $RG -n $APP --xml
 ```
 
-Çıktıyı repo ayarlarında `AZURE_WEBAPP_PUBLISH_PROFILE` secret'ı olarak kaydet. `master`'a
-her push `.github/workflows/deploy.yml` iş akışını tetikler.
+Çıktıyı repo ayarlarında `AZURE_WEBAPP_PUBLISH_PROFILE` secret'ı olarak kaydet. Ardından
+aynı ayarlarda `AZURE_READY` **değişkenini** `true` yap — deploy işi bu bayrak açılana kadar
+atlanır, böylece kaynaklar hazır değilken iş akışı boşuna kırmızı yanmaz.
+
+Bu ikisi tamamlandığında `master`'a her push `.github/workflows/deploy.yml` iş akışını
+tetikler.
 
 > Publish profile parola tabanlıdır. Uzun ömürlü kurulumda federated credential (OIDC) ile
 > `azure/login@v2` kullanmak daha doğrudur; secret rotasyonu ortadan kalkar.
