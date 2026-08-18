@@ -177,3 +177,68 @@ src/app/api/.../stream        SSE uç noktası (canlı + replay)
   arayüzde "kaynaklandırma olmadan çalıştı" notu görünür ve kaynak listesi boş kalır. Gerçek
   linkler için faturalandırma açık bir proje gerekiyor.
 - Gerçek modelle bir analiz uçtan uca ~3-4 dakika sürüyor (11 çağrı, ücretsiz katman gecikmesi).
+
+---
+
+## Azure'a deploy
+
+### Neden B1, neden F1 değil
+
+Orkestratör `POST /api/analyses` cevabı döndükten **sonra** süreç içinde arka planda
+çalışmaya devam eder. App Service'in ücretsiz (F1) planında uygulama boşta kalınca askıya
+alınır ve devam eden analiz ortasında ölür. Bu yüzden **B1 + Always On** gerekir; mimarinin
+doğrudan dayattığı bir maliyet kalemidir.
+
+SSE tarafında ek bir ayar gerekmez: App Service'in ~230 saniyelik boşta kalma zaman aşımını
+akışın 15 saniyelik heartbeat'i zaten sıfırlar.
+
+### Kaynakları oluştur
+
+```bash
+az login
+
+RG=pitcharena-rg; LOC=westeurope
+APP=pitcharena          # genel olarak benzersiz olmalı
+DB=pitcharena-db        # genel olarak benzersiz olmalı
+
+az group create -n $RG -l $LOC
+
+az postgres flexible-server create -g $RG -n $DB -l $LOC \
+  --tier Burstable --sku-name Standard_B1ms --storage-size 32 --version 17 \
+  --admin-user pitcharena --admin-password '<GÜÇLÜ-PAROLA>' \
+  --database-name pitcharena --public-access 0.0.0.0
+
+az appservice plan create -g $RG -n pitcharena-plan --is-linux --sku B1
+az webapp create -g $RG -p pitcharena-plan -n $APP --runtime "NODE:22-lts"
+az webapp config set -g $RG -n $APP --always-on true --startup-file "node server.js"
+
+az webapp config appsettings set -g $RG -n $APP --settings \
+  DATABASE_URL="postgresql://pitcharena:<PAROLA>@$DB.postgres.database.azure.com:5432/pitcharena?sslmode=require" \
+  GEMINI_API_KEY="<anahtar>" \
+  NODE_ENV=production \
+  SCM_DO_BUILD_DURING_DEPLOYMENT=false   # hazır paket gönderiyoruz, Oryx yeniden derlemesin
+```
+
+### Migration'lar
+
+Deploy iş akışı migration çalıştırmaz: GitHub runner'ının IP'si veritabanı güvenlik
+duvarında tanımlı değildir ve her koşuda değişir. Şemayı kendi makinenden uygula:
+
+```bash
+az postgres flexible-server firewall-rule create -g $RG -n $DB \
+  --rule-name yerel --start-ip-address <IP> --end-ip-address <IP>
+
+DATABASE_URL="postgresql://...azure.com:5432/pitcharena?sslmode=require" npm run db:deploy
+```
+
+### GitHub secret
+
+```bash
+az webapp deployment list-publishing-profiles -g $RG -n $APP --xml
+```
+
+Çıktıyı repo ayarlarında `AZURE_WEBAPP_PUBLISH_PROFILE` secret'ı olarak kaydet. `master`'a
+her push `.github/workflows/deploy.yml` iş akışını tetikler.
+
+> Publish profile parola tabanlıdır. Uzun ömürlü kurulumda federated credential (OIDC) ile
+> `azure/login@v2` kullanmak daha doğrudur; secret rotasyonu ortadan kalkar.
