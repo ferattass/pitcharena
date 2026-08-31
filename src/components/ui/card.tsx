@@ -6,7 +6,7 @@ export function Card({ className, ...props }: DivProps) {
   return (
     <div
       className={cn(
-        "rounded-2xl border border-hairline bg-card shadow-card",
+        "premium-card rounded-2xl border border-white/70 transition-all duration-300",
         className,
       )}
       {...props}

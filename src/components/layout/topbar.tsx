@@ -4,7 +4,7 @@ import { SearchBox } from "./search-box";
 
 export function Topbar() {
   return (
-    <header className="flex h-16 shrink-0 items-center gap-4 border-b border-hairline bg-card px-6">
+    <header className="flex h-[72px] shrink-0 items-center gap-4 border-b border-white/70 bg-white/72 px-4 backdrop-blur-xl sm:px-6">
       <div className="ml-auto w-full max-w-xs">
         <SearchBox />
       </div>

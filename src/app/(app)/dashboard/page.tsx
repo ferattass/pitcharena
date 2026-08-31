@@ -3,7 +3,7 @@ import { Activity, ArrowUpRight, Gauge, Scale, Sparkles, Swords } from "lucide-r
 import { Badge, LiveDot } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
 import { Card, CardBody, CardTitle, MetricTile } from "@/components/ui/card";
-import { SCORE_DIMENSIONS } from "@/lib/agents/meta";
+import { FLASH_MODEL, PRO_MODEL, SCORE_DIMENSIONS } from "@/lib/agents/meta";
 import { quotaStatus } from "@/lib/analysis";
 import { verdictHeadline, verdictLabel, verdictVariant } from "@/lib/constants";
 import type { ChairOutput } from "@/lib/agents/schemas";
@@ -58,16 +58,23 @@ export default async function DashboardPage() {
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-5">
+      <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-[11px] font-bold tracking-[0.16em] text-electric-600 uppercase">Command center</p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight text-navy-900">Yatırım kararları, netleşti.</h1>
+        </div>
+        <p className="max-w-sm text-sm leading-relaxed text-navy-500">Her fikir, karşıt görüşler ve somut risklerle test edilir. Gürültüyü değil, karar sinyalini gör.</p>
+      </div>
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         {/* --- Son komite kararı --- */}
-        <Card className="overflow-hidden">
-          <CardBody className="p-6">
+        <Card className="hero-panel overflow-hidden border-0 text-white">
+          <CardBody className="p-6 sm:p-8">
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-3">
                 <Badge variant="live">SON KARAR</Badge>
                 {runningCount > 0 && <LiveDot label={`${runningCount} analiz çalışıyor`} />}
               </div>
-              <span className="grid size-9 shrink-0 place-items-center rounded-full bg-electric-50 text-electric-500">
+              <span className="grid size-10 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/10 text-electric-200 backdrop-blur-sm">
                 <Scale className="size-[18px]" aria-hidden />
               </span>
             </div>
@@ -92,10 +99,10 @@ export default async function DashboardPage() {
                   </span>
                 </div>
 
-                <h1 className="mt-3 max-w-2xl text-2xl leading-snug font-bold text-navy-900">
+                <h2 className="mt-3 max-w-2xl text-2xl leading-snug font-bold text-white sm:text-3xl">
                   {chair?.oneLiner ?? latest.title}
-                </h1>
-                <p className="mt-2 max-w-2xl text-sm leading-relaxed text-navy-500">
+                </h2>
+                <p className="mt-2 max-w-2xl text-sm leading-relaxed text-navy-200">
                   {latest.title}
                 </p>
 
@@ -280,10 +287,10 @@ export default async function DashboardPage() {
                 )}
               </Row>
               <Row label="Tur 1-3 modeli">
-                <span className="font-mono text-[12px] text-navy-600">gemini-2.5-flash</span>
+                <span className="font-mono text-[12px] text-navy-600">{FLASH_MODEL}</span>
               </Row>
               <Row label="Sentez modeli">
-                <span className="font-mono text-[12px] text-navy-600">gemini-2.5-pro</span>
+                <span className="font-mono text-[12px] text-navy-600">{PRO_MODEL}</span>
               </Row>
               <Row label="Ortalama puan">
                 <span className="font-semibold text-navy-900">

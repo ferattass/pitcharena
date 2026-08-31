@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { ArrowRight, Loader2, ShieldAlert } from "lucide-react";
+import { ArrowRight, FileText, Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { MAX_IDEA_LENGTH, MIN_IDEA_LENGTH } from "@/lib/constants";
@@ -16,6 +16,7 @@ const EXAMPLES = [
 export function IdeaForm({ parentId, initialText }: { parentId?: string; initialText?: string }) {
   const router = useRouter();
   const [ideaText, setIdeaText] = useState(initialText ?? "");
+  const [evidenceText, setEvidenceText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [submitting, setSubmitting] = useState(false);
@@ -33,7 +34,13 @@ export function IdeaForm({ parentId, initialText }: { parentId?: string; initial
       const response = await fetch("/api/analyses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ideaText, parentId }),
+        body: JSON.stringify({
+          ideaText,
+          parentId,
+          evidence: evidenceText.trim()
+            ? [{ title: "Kurucu notu", content: evidenceText.trim() }]
+            : [],
+        }),
       });
       const data = await response.json();
 
@@ -78,6 +85,23 @@ export function IdeaForm({ parentId, initialText }: { parentId?: string; initial
                 : `${length} / ${MAX_IDEA_LENGTH} karakter`}
             </span>
             <span className="text-navy-400">11 ajan · 4 tur</span>
+          </div>
+
+          <div className="mt-5 rounded-xl border border-dashed border-electric-200 bg-electric-50/45 p-4">
+            <div className="flex items-center gap-2">
+              <span className="grid size-7 place-items-center rounded-lg bg-electric-100 text-electric-600"><FileText className="size-4" aria-hidden /></span>
+              <div>
+                <p className="text-[13px] font-semibold text-navy-900">Data Room — kanıt ekle</p>
+                <p className="text-[11px] text-navy-500">Müşteri görüşmesi, pazar verisi veya deck özeti. Ajanlar bu metni ayrıca inceler.</p>
+              </div>
+            </div>
+            <textarea
+              value={evidenceText}
+              onChange={(event) => setEvidenceText(event.target.value.slice(0, 12_000))}
+              rows={3}
+              placeholder="Örnek: 12 müşteriyle görüştük; 9'u ayda en az iki kez bu problemi yaşadığını söyledi..."
+              className="mt-3 w-full resize-y rounded-lg border border-electric-100 bg-white/80 p-3 text-[13px] leading-relaxed text-navy-900 placeholder:text-navy-300 focus:border-electric-300"
+            />
           </div>
 
           {!parentId && (

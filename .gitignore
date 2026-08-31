@@ -51,3 +51,6 @@ next-env.d.ts
 .dev.log
 .dev.err.log
 .playwright-mcp/
+.claude/
+Microsoft/
+dash2.png

@@ -46,7 +46,7 @@ export function startAnalysis(analysisId: string): void {
  * ise tam bariyer vardır: Tur 2 ancak Tur 1'in tamamını görebildiğinde başlar.
  */
 export async function runAnalysis(analysisId: string): Promise<void> {
-  const analysis = await prisma.analysis.findUnique({ where: { id: analysisId } });
+  const analysis = await prisma.analysis.findUnique({ where: { id: analysisId }, include: { evidence: true } });
   if (!analysis) throw new Error(`Analiz bulunamadı: ${analysisId}`);
   if (analysis.status !== "QUEUED") return;
 
@@ -65,7 +65,12 @@ export async function runAnalysis(analysisId: string): Promise<void> {
     totalAgents: Object.keys(AGENTS).length,
   });
 
-  const ctx: AgentContext = { ideaText: analysis.ideaText, round1: {}, investors: [] };
+  const dataRoom = analysis.evidence.length
+    ? `\n\nDATA ROOM — KURUCUNUN SUNDUĞU KANITLAR\n${analysis.evidence
+        .map((item) => `### ${item.title}${item.source ? ` (${item.source})` : ""}\n${item.content}`)
+        .join("\n\n")}`
+    : "";
+  const ctx: AgentContext = { ideaText: `${analysis.ideaText}${dataRoom}`, round1: {}, investors: [] };
 
   try {
     // ---------------------------------------------------- TUR 1 (5 paralel)
@@ -128,6 +133,14 @@ export async function runAnalysis(analysisId: string): Promise<void> {
     const scores = await persistScores(analysisId, ctx);
     const overall = weightedOverall(scores);
     const disagreement = disagreementIndex(investorOutputs.map((i) => i.output.decision));
+
+    await prisma.founderChallenge.createMany({
+      data: chair.changeMyMind.map((item) => ({
+        analysisId,
+        question: item.item,
+        context: item.why,
+      })),
+    });
 
     await emit(analysisId, "scores.computed", { scores, overall, disagreement });
 

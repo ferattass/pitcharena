@@ -30,15 +30,15 @@ export type AgentAccent = "neutral" | "attack" | "defense" | "investor" | "chair
 // listeleniyor ama yeni hesaplara kapalı ("no longer available to new users").
 // Bu yüzden her rol için bir yedek zinciri tutuyoruz; biri kapanırsa ya da
 // kotası biterse orkestratör sıradakine geçer (bkz. lib/orchestrator/run.ts).
-export const FLASH_MODEL = "gemini-3.6-flash";
-export const PRO_MODEL = "gemini-pro-latest";
+export const FLASH_MODEL = "gemini-3.5-flash-lite";
+export const PRO_MODEL = FLASH_MODEL;
 
 /** Birincil model çağrılamazsa sırayla denenecek modeller. */
-export const FLASH_FALLBACKS = ["gemini-3.5-flash", "gemini-flash-latest"];
+export const FLASH_FALLBACKS: string[] = [];
 
 // Ücretsiz katmanda Pro kotası çoğu hesapta yok; sentez o durumda Flash'a
 // düşer. Analiz üretmemektense biraz daha zayıf muhakemeyle üretmek yeğdir.
-export const PRO_FALLBACKS = [FLASH_MODEL, ...FLASH_FALLBACKS];
+export const PRO_FALLBACKS: string[] = [];
 
 export interface AgentMeta {
   key: AgentKey;

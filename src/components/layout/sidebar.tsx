@@ -28,13 +28,13 @@ export function Sidebar({ quota }: { quota: { used: number; limit: number; remai
   const percent = quota.limit > 0 ? (quota.remaining / quota.limit) * 100 : 0;
 
   return (
-    <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-hairline bg-card md:flex">
+    <aside className="sidebar-sheen sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-white/10 md:flex">
       <Link
         href="/dashboard"
-        className="flex items-center gap-2.5 px-5 py-6 text-navy-900"
+        className="flex items-center gap-2.5 px-5 py-7 text-white"
       >
-        <Gem className="size-5 text-electric-500" aria-hidden />
-        <span className="text-[15px] font-bold tracking-tight">PitchArena</span>
+        <span className="grid size-8 place-items-center rounded-xl bg-electric-500 text-white shadow-[0_8px_20px_rgb(30_94_255_/_0.35)]"><Gem className="size-4" aria-hidden /></span>
+        <span><span className="block text-[15px] font-bold tracking-tight">PitchArena</span><span className="mt-0.5 block text-[10px] font-medium tracking-[0.16em] text-electric-200 uppercase">Investment OS</span></span>
       </Link>
 
       <nav aria-label="Ana menü" className="flex flex-col gap-1 px-3">
@@ -46,10 +46,10 @@ export function Sidebar({ quota }: { quota: { used: number; limit: number; remai
               href={href}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
                 active
-                  ? "bg-electric-500 text-white shadow-card"
-                  : "text-navy-600 hover:bg-navy-50 hover:text-navy-900",
+                  ? "bg-white/14 text-white shadow-[inset_0_1px_0_rgb(255_255_255_/_0.16)]"
+                  : "text-navy-200 hover:bg-white/8 hover:text-white",
               )}
             >
               <Icon className="size-[18px] shrink-0" aria-hidden />
@@ -60,18 +60,18 @@ export function Sidebar({ quota }: { quota: { used: number; limit: number; remai
       </nav>
 
       <div className="mt-auto p-4">
-        <div className="rounded-xl bg-navy-50 p-3.5">
-          <p className="text-xs font-semibold text-navy-800">Ücretsiz katman</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-navy-500">
+        <div className="rounded-2xl border border-white/10 bg-white/6 p-3.5 backdrop-blur-sm">
+          <p className="text-xs font-semibold text-white">Analiz kapasitesi</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-navy-300">
             Bugün kalan analiz hakkı
           </p>
           <div className="mt-2 flex items-baseline gap-1">
-            <span className="text-lg font-bold text-navy-900">{quota.remaining}</span>
-            <span className="text-[11px] text-navy-400">/ {quota.limit}</span>
+            <span className="text-lg font-bold text-white">{quota.remaining}</span>
+            <span className="text-[11px] text-navy-300">/ {quota.limit}</span>
           </div>
-          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-navy-200">
+          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
             <div
-              className="h-full rounded-full bg-electric-500"
+              className="h-full rounded-full bg-linear-to-r from-electric-400 to-cyan-300"
               style={{ width: `${percent}%` }}
             />
           </div>

@@ -87,6 +87,8 @@ model Analysis {
   runs   AgentRun[]
   scores Score[]
   events Event[]
+  evidence AnalysisEvidence[]
+  challenges FounderChallenge[]
 
   @@index([ideaHash])
   @@index([userId, createdAt])
@@ -161,4 +163,34 @@ model Event {
 
   @@unique([analysisId, seq])
   @@index([analysisId, seq])
+}
+
+/// Kurucunun analiz öncesi sunduğu kanıtlar: görüşme notu, pazar verisi,
+/// pitch deck özeti veya bağlantı. Ajanlar bunu "Data Room" bağlamı olarak okur.
+model AnalysisEvidence {
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  title   String
+  content String
+  source  String?
+  createdAt DateTime @default(now())
+
+  @@index([analysisId, createdAt])
+}
+
+/// Komitenin değişmesi için gereken kanıtlardan türetilen kurucu stres testi.
+model FounderChallenge {
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  question String
+  context  String?
+  answer   String?
+  createdAt DateTime @default(now())
+  answeredAt DateTime?
+
+  @@index([analysisId, createdAt])
 }

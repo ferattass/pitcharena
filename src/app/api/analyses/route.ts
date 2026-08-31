@@ -19,6 +19,16 @@ const createSchema = z.object({
     .max(MAX_IDEA_LENGTH, `Fikir en fazla ${MAX_IDEA_LENGTH} karakter olabilir.`),
   /** Yeni versiyon çalıştırılıyorsa önceki analizin id'si. */
   parentId: z.string().optional(),
+  evidence: z
+    .array(
+      z.object({
+        title: z.string().trim().min(2).max(120),
+        content: z.string().trim().min(20).max(12_000),
+        source: z.string().trim().url().optional().or(z.literal("")),
+      }),
+    )
+    .max(8)
+    .default([]),
 });
 
 export async function POST(request: NextRequest) {
@@ -32,7 +42,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { ideaText, parentId } = parsed.data;
+  const { ideaText, parentId, evidence } = parsed.data;
   const quota = await quotaStatus();
   if (quota.remaining <= 0) {
     return Response.json(
@@ -57,7 +67,10 @@ export async function POST(request: NextRequest) {
   }
 
   const parent = parentId
-    ? await prisma.analysis.findUnique({ where: { id: parentId }, select: { version: true } })
+    ? await prisma.analysis.findUnique({
+        where: { id: parentId },
+        select: { version: true, evidence: { select: { title: true, content: true, source: true } } },
+      })
     : null;
 
   const analysis = await prisma.analysis.create({
@@ -67,6 +80,13 @@ export async function POST(request: NextRequest) {
       title: deriveTitle(ideaText),
       parentId: parent ? parentId : null,
       version: parent ? parent.version + 1 : 1,
+      evidence: {
+        create: [...(parent?.evidence ?? []), ...evidence].map((item) => ({
+          title: item.title,
+          content: item.content,
+          source: item.source || null,
+        })),
+      },
     },
     select: { id: true },
   });

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CalendarDays, GitBranch, PlayCircle, RotateCcw } from "lucide-react";
 import { LiveAnalysis } from "@/components/analysis/live-analysis";
+import { InvestmentWorkspace } from "@/components/analysis/investment-workspace";
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
@@ -26,6 +27,8 @@ export default async function AnalysisDetailPage(props: PageProps<"/analysis/[id
     include: {
       runs: { include: { citations: true } },
       scores: true,
+      evidence: { orderBy: { createdAt: "asc" } },
+      challenges: { orderBy: { createdAt: "asc" } },
       children: { select: { id: true, version: true }, orderBy: { version: "asc" } },
       parent: { select: { id: true, version: true, overallScore: true } },
     },
@@ -105,12 +108,25 @@ export default async function AnalysisDetailPage(props: PageProps<"/analysis/[id
                   v{child.version}
                 </Link>
               ))}
+              {analysis.parent && analysis.parent.overallScore !== null && analysis.overallScore !== null && (
+                <span className={analysis.overallScore >= analysis.parent.overallScore ? "ml-auto rounded-lg bg-verdict-go/10 px-2.5 py-1 text-[12px] font-semibold text-verdict-go" : "ml-auto rounded-lg bg-verdict-nogo/10 px-2.5 py-1 text-[12px] font-semibold text-verdict-nogo"}>
+                  {analysis.overallScore >= analysis.parent.overallScore ? "+" : ""}{analysis.overallScore - analysis.parent.overallScore} puan · v{analysis.version - 1}&rarr;v{analysis.version}
+                </span>
+              )}
             </div>
           )}
         </CardBody>
       </Card>
 
       <LiveAnalysis initial={view} replay={replay} />
+      {finished && !replay && (
+        <InvestmentWorkspace
+          analysisId={analysis.id}
+          evidence={analysis.evidence}
+          challenges={analysis.challenges}
+          citationCount={analysis.runs.reduce((total, run) => total + run.citations.length, 0)}
+        />
+      )}
     </div>
   );
 }
