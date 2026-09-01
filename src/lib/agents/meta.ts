@@ -34,11 +34,11 @@ export const FLASH_MODEL = "gemini-3.5-flash-lite";
 export const PRO_MODEL = FLASH_MODEL;
 
 /** Birincil model çağrılamazsa sırayla denenecek modeller. */
-export const FLASH_FALLBACKS: string[] = [];
+export const FLASH_FALLBACKS: string[] = ["gemini-3.5-flash", "gemini-3.6-flash"];
 
 // Ücretsiz katmanda Pro kotası çoğu hesapta yok; sentez o durumda Flash'a
 // düşer. Analiz üretmemektense biraz daha zayıf muhakemeyle üretmek yeğdir.
-export const PRO_FALLBACKS: string[] = [];
+export const PRO_FALLBACKS: string[] = ["gemini-3.5-flash", "gemini-3.6-flash"];
 
 export interface AgentMeta {
   key: AgentKey;

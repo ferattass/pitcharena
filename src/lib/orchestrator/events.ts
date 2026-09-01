@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { isDatabaseUnavailableError } from "@/lib/db-errors";
 
 /**
  * Olay akışının tek kaynağı DB'dir. Orkestratör bellekte hiçbir şey tutmaz;
@@ -37,10 +38,7 @@ export function emit(
   const next = previous.then(() => write(analysisId, type, payload));
 
   // Kuyruk hata yüzünden kırılmasın; bir olay yazılamazsa sonrakiler devam etsin.
-  writeQueues.set(
-    analysisId,
-    next.catch(() => undefined),
-  );
+  writeQueues.set(analysisId, next.catch(() => undefined));
   return next;
 }
 
@@ -52,13 +50,13 @@ async function write(
   // Serileştirmeye rağmen (çok süreçli dağıtımda) çakışma olabilir; unique
   // ihlalinde bir sonraki numarayla tekrar dener.
   for (let attempt = 0; attempt < 5; attempt++) {
-    const last = await prisma.event.findFirst({
-      where: { analysisId },
-      orderBy: { seq: "desc" },
-      select: { seq: true },
-    });
-
     try {
+      const last = await prisma.event.findFirst({
+        where: { analysisId },
+        orderBy: { seq: "desc" },
+        select: { seq: true },
+      });
+
       await prisma.event.create({
         data: {
           analysisId,
@@ -69,6 +67,7 @@ async function write(
       });
       return;
     } catch (error) {
+      if (isDatabaseUnavailableError(error)) return;
       const code = (error as { code?: string }).code;
       if (code !== "P2002") throw error;
     }
@@ -77,17 +76,22 @@ async function write(
 }
 
 export async function readEvents(analysisId: string, afterSeq = 0): Promise<AnalysisEvent[]> {
-  const rows = await prisma.event.findMany({
-    where: { analysisId, seq: { gt: afterSeq } },
-    orderBy: { seq: "asc" },
-  });
+  try {
+    const rows = await prisma.event.findMany({
+      where: { analysisId, seq: { gt: afterSeq } },
+      orderBy: { seq: "asc" },
+    });
 
-  return rows.map((row) => ({
-    seq: row.seq,
-    type: row.type as EventType,
-    payload: (row.payload ?? {}) as Record<string, unknown>,
-    createdAt: row.createdAt,
-  }));
+    return rows.map((row) => ({
+      seq: row.seq,
+      type: row.type as EventType,
+      payload: (row.payload ?? {}) as Record<string, unknown>,
+      createdAt: row.createdAt,
+    }));
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) return [];
+    throw error;
+  }
 }
 
 /** Analiz bittiğinde kuyruk kaydını bırak; uzun süren süreçte bellek şişmesin. */

@@ -64,16 +64,36 @@ export function LiveAnalysis({
   );
   const [connected, setConnected] = useState(false);
   const seqRef = useRef(view.lastSeq);
+  const sourceRef = useRef<EventSource | null>(null);
+  const retryRef = useRef<number | null>(null);
+  const finishedRef = useRef(false);
 
   useEffect(() => {
     const finished = view.status === "COMPLETED" || view.status === "FAILED";
+    finishedRef.current = finished;
     if (!replay && finished) return;
 
-    const query = replay ? "?replay=1" : `?from=${seqRef.current}`;
-    const source = new EventSource(`/api/analyses/${initial.id}/stream${query}`);
+    const clearRetry = () => {
+      if (retryRef.current !== null) {
+        window.clearTimeout(retryRef.current);
+        retryRef.current = null;
+      }
+    };
 
-    source.onopen = () => setConnected(true);
-    source.onerror = () => setConnected(false);
+    const detachSource = () => {
+      if (!sourceRef.current) return;
+      for (const type of EVENT_TYPES) sourceRef.current.removeEventListener(type, handler);
+      sourceRef.current.close();
+      sourceRef.current = null;
+    };
+
+    const scheduleReconnect = (delay = 1200) => {
+      if (replay || finishedRef.current || retryRef.current !== null) return;
+      retryRef.current = window.setTimeout(() => {
+        retryRef.current = null;
+        connect();
+      }, delay);
+    };
 
     const handler = (event: MessageEvent<string>) => {
       let parsed: StreamEvent;
@@ -87,18 +107,53 @@ export function LiveAnalysis({
       setView((current) => applyEvent(current, parsed));
 
       if (parsed.type === "analysis.completed" || parsed.type === "analysis.failed") {
-        source.close();
+        finishedRef.current = true;
+        detachSource();
+        clearRetry();
         setConnected(false);
-        // Sunucu tarafındaki liste ve kota göstergelerini tazele.
         if (!replay) router.refresh();
       }
     };
 
-    for (const type of EVENT_TYPES) source.addEventListener(type, handler);
+    const connect = () => {
+      if (finishedRef.current && !replay) return;
+      clearRetry();
+      detachSource();
+
+      const query = replay ? "?replay=1" : `?from=${seqRef.current}`;
+      const source = new EventSource(`/api/analyses/${initial.id}/stream${query}`);
+      sourceRef.current = source;
+
+      source.onopen = () => setConnected(true);
+      source.onerror = () => {
+        setConnected(false);
+        scheduleReconnect();
+      };
+
+      for (const type of EVENT_TYPES) source.addEventListener(type, handler);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible" && !finishedRef.current) {
+        connect();
+      }
+    };
+
+    const onFocus = () => {
+      if (!finishedRef.current) connect();
+    };
+
+    connect();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("pageshow", onFocus);
 
     return () => {
-      for (const type of EVENT_TYPES) source.removeEventListener(type, handler);
-      source.close();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("pageshow", onFocus);
+      clearRetry();
+      detachSource();
     };
     // Akış bir kez kurulur; sonraki güncellemeler reducer üzerinden gelir.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { readDb } from "@/lib/db-errors";
 
 // Sabitler, etiketler ve saf metin dönüşümleri ayrı modüllerde durur:
 // ilki istemciyle, ikincisi testlerle paylaşıldığı için DB'ye bağlı olmamalı.
@@ -14,10 +15,13 @@ export async function quotaStatus() {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
-  const used = await prisma.analysis.count({
-    where: { createdAt: { gte: startOfDay }, isDemo: false },
-  });
   const limit = dailyLimit();
+  const { value: used } = await readDb(
+    prisma.analysis.count({
+      where: { createdAt: { gte: startOfDay }, isDemo: false },
+    }),
+    0,
+  );
 
   return { used, limit, remaining: Math.max(0, limit - used) };
 }

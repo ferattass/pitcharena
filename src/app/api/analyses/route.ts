@@ -9,6 +9,8 @@ import {
   quotaStatus,
 } from "@/lib/analysis";
 import { prisma } from "@/lib/db";
+import { isDatabaseUnavailableError } from "@/lib/db-errors";
+import { createOfflineAnalysis, listOfflineAnalyses } from "@/lib/offline-analyses";
 import { startAnalysis } from "@/lib/orchestrator/run";
 
 const createSchema = z.object({
@@ -17,7 +19,6 @@ const createSchema = z.object({
     .trim()
     .min(MIN_IDEA_LENGTH, `Fikir en az ${MIN_IDEA_LENGTH} karakter olmalı.`)
     .max(MAX_IDEA_LENGTH, `Fikir en fazla ${MAX_IDEA_LENGTH} karakter olabilir.`),
-  /** Yeni versiyon çalıştırılıyorsa önceki analizin id'si. */
   parentId: z.string().optional(),
   evidence: z
     .array(
@@ -53,68 +54,116 @@ export async function POST(request: NextRequest) {
 
   const ideaHash = hashIdea(ideaText);
 
-  // Aynı fikir daha önce analiz edildiyse kotayı yakmadan mevcut sonucu döndür.
-  // Versiyon çalıştırmalarında bu atlanır — amaç zaten farkı görmek.
-  if (!parentId) {
-    const existing = await prisma.analysis.findFirst({
-      where: { ideaHash, status: "COMPLETED" },
-      orderBy: { createdAt: "desc" },
+  try {
+    if (!parentId) {
+      const existing = await prisma.analysis.findFirst({
+        where: { ideaHash, status: "COMPLETED" },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+      if (existing) {
+        return Response.json({ id: existing.id, cached: true }, { status: 200 });
+      }
+    }
+
+    const parent = parentId
+      ? await prisma.analysis.findUnique({
+          where: { id: parentId },
+          select: { version: true, evidence: { select: { title: true, content: true, source: true } } },
+        })
+      : null;
+
+    const analysis = await prisma.analysis.create({
+      data: {
+        ideaText,
+        ideaHash,
+        title: deriveTitle(ideaText),
+        parentId: parent ? parentId : null,
+        version: parent ? parent.version + 1 : 1,
+        evidence: {
+          create: [...(parent?.evidence ?? []), ...evidence].map((item) => ({
+            title: item.title,
+            content: item.content,
+            source: item.source || null,
+          })),
+        },
+      },
       select: { id: true },
     });
-    if (existing) {
-      return Response.json({ id: existing.id, cached: true }, { status: 200 });
+
+    after(() => startAnalysis(analysis.id));
+
+    return Response.json({ id: analysis.id, cached: false }, { status: 201 });
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      // DB yok: analizi bellekte üret. Sağlayıcı kotası bitmişse `executeAgent`
+      // simülasyona düşer, yani buraya ancak ajanlar şema sözleşmesini bozarsa
+      // hata gelir — o durumda da istemciye 500 değil okunur bir mesaj dönmeli.
+      try {
+        const offline = await createOfflineAnalysis({
+          ideaText,
+          parentId,
+          evidence: evidence.map((item) => ({
+            title: item.title,
+            content: item.content,
+            source: item.source || null,
+          })),
+        });
+        return Response.json({ id: offline.analysis.id, cached: false, offline: true }, { status: 201 });
+      } catch (offlineError) {
+        console.error("[analyses] çevrimdışı analiz üretilemedi:", offlineError);
+        return Response.json(
+          {
+            error:
+              "Veritabanına erişilemiyor ve çevrimdışı analiz üretilemedi. " +
+              "Birkaç dakika sonra tekrar deneyin.",
+          },
+          { status: 503 },
+        );
+      }
     }
+    throw error;
   }
-
-  const parent = parentId
-    ? await prisma.analysis.findUnique({
-        where: { id: parentId },
-        select: { version: true, evidence: { select: { title: true, content: true, source: true } } },
-      })
-    : null;
-
-  const analysis = await prisma.analysis.create({
-    data: {
-      ideaText,
-      ideaHash,
-      title: deriveTitle(ideaText),
-      parentId: parent ? parentId : null,
-      version: parent ? parent.version + 1 : 1,
-      evidence: {
-        create: [...(parent?.evidence ?? []), ...evidence].map((item) => ({
-          title: item.title,
-          content: item.content,
-          source: item.source || null,
-        })),
-      },
-    },
-    select: { id: true },
-  });
-
-  // Orkestratör yanıtı bloklamaz; istemci ilerlemeyi SSE'den izler.
-  after(() => startAnalysis(analysis.id));
-
-  return Response.json({ id: analysis.id, cached: false }, { status: 201 });
 }
 
 export async function GET() {
-  const analyses = await prisma.analysis.findMany({
-    orderBy: { createdAt: "desc" },
-    take: 50,
-    select: {
-      id: true,
-      title: true,
-      status: true,
-      verdict: true,
-      overallScore: true,
-      disagreement: true,
-      simulated: true,
-      isDemo: true,
-      version: true,
-      parentId: true,
-      createdAt: true,
-    },
-  });
+  try {
+    const analyses = await prisma.analysis.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        verdict: true,
+        overallScore: true,
+        disagreement: true,
+        simulated: true,
+        isDemo: true,
+        version: true,
+        parentId: true,
+        createdAt: true,
+      },
+    });
 
-  return Response.json({ analyses });
+    return Response.json({ analyses });
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      const analyses = listOfflineAnalyses().map((record) => ({
+        id: record.analysis.id,
+        title: record.analysis.title,
+        status: record.analysis.status,
+        verdict: record.analysis.verdict,
+        overallScore: record.analysis.overallScore,
+        disagreement: record.analysis.disagreement,
+        simulated: record.analysis.simulated,
+        isDemo: false,
+        version: record.analysis.version,
+        parentId: record.analysis.parentId,
+        createdAt: record.analysis.createdAt,
+      }));
+      return Response.json({ analyses });
+    }
+    throw error;
+  }
 }

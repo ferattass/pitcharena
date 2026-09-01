@@ -4,7 +4,8 @@ import { Card, CardBody } from "@/components/ui/card";
 import { AGENT_KEYS, AGENT_META } from "@/lib/agents/meta";
 import { dailyLimit, quotaStatus } from "@/lib/analysis";
 import { prisma } from "@/lib/db";
-import { providerStatus } from "@/lib/llm";
+import { readDb } from "@/lib/db-errors";
+import { isGroundingUnavailable, llmUnavailableUntil, providerStatus } from "@/lib/llm";
 
 export const metadata = { title: "Ayarlar · PitchArena" };
 export const dynamic = "force-dynamic";
@@ -17,20 +18,28 @@ export const dynamic = "force-dynamic";
  * hangi sağlayıcı aktif, kota nerede, veriler nereye gidiyor.
  */
 export default async function SettingsPage() {
-  const [quota, counts] = await Promise.all([
+  const [quota, countsResult] = await Promise.all([
     quotaStatus(),
-    prisma.$transaction([
-      prisma.analysis.count(),
-      prisma.agentRun.count(),
-      prisma.event.count(),
-      prisma.citation.count(),
-    ]),
+    readDb(
+      prisma.$transaction([
+        prisma.analysis.count(),
+        prisma.agentRun.count(),
+        prisma.event.count(),
+        prisma.citation.count(),
+      ]),
+      [0, 0, 0, 0] as const,
+    ),
   ]);
 
-  const [analyses, runs, events, citations] = counts;
+  const [analyses, runs, events, citations] = countsResult.value;
   const status = providerStatus();
   const usingGemini = status.id === "gemini";
   const rpm = process.env.GEMINI_RPM_LIMIT ?? "10";
+  // Anahtar geçerli olsa da kota bitmiş olabilir; o durumda analizler
+  // simülasyonla üretilir ve bunun ekranda görünmesi gerekir.
+  const quotaLockUntil = llmUnavailableUntil();
+  // Arama kotası modelinkinden ayrı ve ücretsiz katmanda çoğu hesapta sıfır.
+  const groundingDown = isGroundingUnavailable();
 
   return (
     <div className="mx-auto max-w-[1000px] space-y-5">
@@ -64,6 +73,24 @@ export default async function SettingsPage() {
             <Row label="Dakika başı çağrı sınırı">
               <span className="font-mono text-[12px] text-navy-600">{rpm} RPM</span>
             </Row>
+            {usingGemini && (
+              <Row label="Gemini kotası">
+                {quotaLockUntil ? (
+                  <Badge variant="goif">tükendi</Badge>
+                ) : (
+                  <Badge variant="go">kullanılabilir</Badge>
+                )}
+              </Row>
+            )}
+            {usingGemini && (
+              <Row label="Google Search kotası">
+                {groundingDown ? (
+                  <Badge variant="goif">kapalı</Badge>
+                ) : (
+                  <Badge variant="go">kullanılabilir</Badge>
+                )}
+              </Row>
+            )}
             <Row label="Günlük analiz sınırı">
               <span className="font-mono text-[12px] text-navy-600">{dailyLimit()}</span>
             </Row>
@@ -77,6 +104,24 @@ export default async function SettingsPage() {
           {status.reason !== "ok" && (
             <p className="mt-4 rounded-lg bg-verdict-goif/10 px-3 py-2.5 text-[12px] leading-relaxed text-navy-700">
               {KEY_STATE_HINT[status.reason]}
+            </p>
+          )}
+
+          {groundingDown && (
+            <p className="mt-4 rounded-lg bg-verdict-goif/10 px-3 py-2.5 text-[12px] leading-relaxed text-navy-700">
+              Google Search kotası bu anahtarda kapalı: model çağrıları çalışıyor ama arama
+              aracı 429 dönüyor. Pazar Analisti ve Rakip Avcısı aramasız çalışıyor, çıktıları
+              «kaynaksız» rozetiyle işaretleniyor ve sayıları doğrulanmamış tahmindir. Gerçek
+              kaynak için Google AI Studio’da faturalandırmayı açmanız gerekir.
+            </p>
+          )}
+
+          {quotaLockUntil && (
+            <p className="mt-4 rounded-lg bg-verdict-goif/10 px-3 py-2.5 text-[12px] leading-relaxed text-navy-700">
+              Gemini kotası tükendiği için analizler simülasyon sağlayıcısıyla üretiliyor ve
+              açıkça «SİMÜLASYON» rozetiyle işaretleniyor. Kota{" "}
+              {quotaLockUntil.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}{" "}
+              civarında tekrar denenecek; sunucuyu yeniden başlatmak gerekmez.
             </p>
           )}
         </CardBody>

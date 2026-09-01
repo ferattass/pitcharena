@@ -7,18 +7,27 @@ import {
   type AgentContext,
   type AgentKey,
 } from "@/lib/agents/definitions";
-import { toGeminiSchema } from "@/lib/agents/schemas";
+import { executeAgent } from "@/lib/agents/execute";
 import type { ChairOutput, InvestorOutput } from "@/lib/agents/schemas";
 import { prisma } from "@/lib/db";
+import { isDatabaseUnavailableError, readDb } from "@/lib/db-errors";
 import { getLlmProvider } from "@/lib/llm";
-import { ModelUnavailableError, RetryableLlmError } from "@/lib/llm/types";
 import { disagreementIndex, weightedOverall } from "@/lib/scoring";
 import { emit, releaseQueue } from "./events";
 
-const MAX_ATTEMPTS = 3;
-
 // Aynı analizin iki kez başlatılmasını engeller (çift POST, hot reload, retry).
 const running = new Set<string>();
+
+/**
+ * Analiz boyunca taşınan tek mutasyona açık bilgi.
+ *
+ * Sağlayıcı kotası analizin ortasında bitebilir; o noktadan sonraki ajanlar
+ * simülasyonla üretilir. Kayıttaki `simulated` bayrağı bunu yansıtmalı, yoksa
+ * arayüz şablon metni gerçek analiz gibi gösterir.
+ */
+interface RunState {
+  simulated: boolean;
+}
 
 /**
  * Analizi arka planda başlatır ve hemen döner. Çağıran cevabı beklemez;
@@ -46,21 +55,25 @@ export function startAnalysis(analysisId: string): void {
  * ise tam bariyer vardır: Tur 2 ancak Tur 1'in tamamını görebildiğinde başlar.
  */
 export async function runAnalysis(analysisId: string): Promise<void> {
-  const analysis = await prisma.analysis.findUnique({ where: { id: analysisId }, include: { evidence: true } });
-  if (!analysis) throw new Error(`Analiz bulunamadı: ${analysisId}`);
+  const analysisResult = await readDb(
+    prisma.analysis.findUnique({ where: { id: analysisId }, include: { evidence: true } }),
+    null,
+  );
+  if (!analysisResult.value) return;
+  const analysis = analysisResult.value;
   if (analysis.status !== "QUEUED") return;
 
   const provider = getLlmProvider();
-  const simulated = provider.id === "simulation";
+  const state: RunState = { simulated: provider.id === "simulation" };
 
   await prisma.analysis.update({
     where: { id: analysisId },
-    data: { status: "RUNNING", simulated },
+    data: { status: "RUNNING", simulated: state.simulated },
   });
 
   await emit(analysisId, "analysis.started", {
     title: analysis.title,
-    simulated,
+    simulated: state.simulated,
     provider: provider.id,
     totalAgents: Object.keys(AGENTS).length,
   });
@@ -70,14 +83,19 @@ export async function runAnalysis(analysisId: string): Promise<void> {
         .map((item) => `### ${item.title}${item.source ? ` (${item.source})` : ""}\n${item.content}`)
         .join("\n\n")}`
     : "";
-  const ctx: AgentContext = { ideaText: `${analysis.ideaText}${dataRoom}`, round1: {}, investors: [] };
+  const ctx: AgentContext = {
+    ideaText: `${analysis.ideaText}${dataRoom}`,
+    hasEvidence: analysis.evidence.length > 0,
+    round1: {},
+    investors: [],
+  };
 
   try {
     // ---------------------------------------------------- TUR 1 (5 paralel)
     await emit(analysisId, "round.started", { round: 1, label: ROUND_LABELS[1], agents: agentCards(1) });
 
     const round1 = await Promise.all(
-      ROUND_AGENTS[1].map((key) => runAgent(analysisId, key, ctx).catch(() => null)),
+      ROUND_AGENTS[1].map((key) => runAgent(analysisId, key, ctx, state).catch(() => null)),
     );
     ROUND_AGENTS[1].forEach((key, i) => {
       if (round1[i] !== null) ctx.round1[key] = round1[i];
@@ -95,8 +113,8 @@ export async function runAnalysis(analysisId: string): Promise<void> {
     // Avukat, şüphecinin saldırılarını görmek zorunda — bu yüzden sıralı.
     await emit(analysisId, "round.started", { round: 2, label: ROUND_LABELS[2], agents: agentCards(2) });
 
-    ctx.skeptic = (await runAgent(analysisId, "skeptic", ctx)) as AgentContext["skeptic"];
-    ctx.advocate = (await runAgent(analysisId, "advocate", ctx)) as AgentContext["advocate"];
+    ctx.skeptic = (await runAgent(analysisId, "skeptic", ctx, state)) as AgentContext["skeptic"];
+    ctx.advocate = (await runAgent(analysisId, "advocate", ctx, state)) as AgentContext["advocate"];
 
     await emit(analysisId, "round.completed", { round: 2 });
 
@@ -109,7 +127,7 @@ export async function runAnalysis(analysisId: string): Promise<void> {
     // yitirir ve durmak, yanıltıcı bir "fikir birliği" göstermekten iyidir.
     const investorResults = await Promise.all(
       INVESTOR_KEYS.map(async (key) => {
-        const output = await runAgent(analysisId, key, ctx).catch(() => null);
+        const output = await runAgent(analysisId, key, ctx, state).catch(() => null);
         return output === null ? null : { key, name: AGENTS[key].name, output: output as InvestorOutput };
       }),
     );
@@ -126,7 +144,7 @@ export async function runAnalysis(analysisId: string): Promise<void> {
 
     // ---------------------------------------------------- TUR 4 (sentez)
     await emit(analysisId, "round.started", { round: 4, label: ROUND_LABELS[4], agents: agentCards(4) });
-    const chair = (await runAgent(analysisId, "chair", ctx)) as ChairOutput;
+    const chair = (await runAgent(analysisId, "chair", ctx, state)) as ChairOutput;
     await emit(analysisId, "round.completed", { round: 4 });
 
     // ---------------------------------------------------- skorlama
@@ -151,6 +169,9 @@ export async function runAnalysis(analysisId: string): Promise<void> {
         verdict: chair.verdict,
         overallScore: overall,
         disagreement,
+        // Kota analizin ortasında bitmiş olabilir; bayrak başlangıçtaki değil
+        // gerçekleşen duruma göre yazılır.
+        simulated: state.simulated,
         completedAt: new Date(),
       },
     });
@@ -163,11 +184,21 @@ export async function runAnalysis(analysisId: string): Promise<void> {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await prisma.analysis.update({
-      where: { id: analysisId },
-      data: { status: "FAILED", errorMessage: message, completedAt: new Date() },
-    });
-    await emit(analysisId, "analysis.failed", { error: message });
+    try {
+      await prisma.analysis.update({
+        where: { id: analysisId },
+        data: { status: "FAILED", errorMessage: message, completedAt: new Date() },
+      });
+    } catch (updateError) {
+      if (!isDatabaseUnavailableError(updateError)) throw updateError;
+      return;
+    }
+
+    try {
+      await emit(analysisId, "analysis.failed", { error: message });
+    } catch {
+      /* event akışı DB kapanınca sessizce durur */
+    }
   }
 }
 
@@ -180,10 +211,20 @@ function agentCards(round: 1 | 2 | 3 | 4) {
   }));
 }
 
-/** Tek bir ajanı çalıştırır, doğrular, kaydeder ve olaylarını yayınlar. */
-async function runAgent(analysisId: string, key: AgentKey, ctx: AgentContext): Promise<unknown> {
+/**
+ * Tek bir ajanı çalıştırır, kaydeder ve olaylarını yayınlar.
+ *
+ * Model seçimi, yeniden deneme ve simülasyona düşme mantığı burada değil
+ * `lib/agents/execute.ts`'te: offline yol da aynı merdiveni kullanıyor ve iki
+ * kopyanın zamanla ayrışması bu dosyanın çözdüğü sorunu geri getirir.
+ */
+async function runAgent(
+  analysisId: string,
+  key: AgentKey,
+  ctx: AgentContext,
+  state: RunState,
+): Promise<unknown> {
   const agent = AGENTS[key];
-  const provider = getLlmProvider();
   const startedAt = new Date();
 
   const run = await prisma.agentRun.upsert({
@@ -209,132 +250,86 @@ async function runAgent(analysisId: string, key: AgentKey, ctx: AgentContext): P
   });
 
   const began = Date.now();
-  let lastError: unknown;
 
-  // Birincil model + yedekleri. Bir model kapanmış ya da kotasız ise
-  // beklemek işe yaramaz; sıradaki modele geçilir.
-  const models = [agent.model, ...agent.fallbackModels];
-  let modelIndex = 0;
+  try {
+    const execution = await executeAgent(key, ctx, {
+      onDegraded: ({ reason, message }) =>
+        emit(analysisId, "agent.degraded", {
+          agentKey: key,
+          name: agent.name,
+          round: agent.round,
+          reason,
+          message,
+        }),
+      onRetry: ({ attempt, waitMs }) =>
+        emit(analysisId, "agent.started", {
+          agentKey: key,
+          name: agent.name,
+          round: agent.round,
+          retryOf: attempt,
+          waitMs,
+        }),
+    });
 
-  // Google Search grounding'in modelden AYRI bir kotası var ve ücretsiz
-  // katmanda çoğu hesapta sıfır. Kaynaklandırma bir zenginleştirme, ön koşul
-  // değil: kota yoksa ajanı düşürmek yerine aramasız çalıştırıyoruz.
-  let grounded = agent.grounded;
+    // Bir ajan bile simülasyona düştüyse analiz artık saf Gemini çıktısı değil.
+    if (execution.simulated) state.simulated = true;
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const model = models[modelIndex];
-    try {
-      const result = await provider.complete({
-        model,
-        systemPrompt: agent.systemPrompt,
-        userPrompt: agent.buildUserPrompt(ctx),
-        jsonSchema: toGeminiSchema(agent.schema),
-        grounded,
-        agentKey: key,
-        context: ctx,
+    await prisma.agentRun.update({
+      where: { id: run.id },
+      data: {
+        status: "COMPLETED",
+        // Yedeğe ya da simülasyona düşülmüş olabilir; kayıtta gerçekten
+        // kullanılan model durmalı.
+        model: execution.model,
+        rawJson: execution.parsed as never,
+        promptTokens: execution.promptTokens,
+        outputTokens: execution.outputTokens,
+        latencyMs: execution.latencyMs,
+        endedAt: new Date(),
+      },
+    });
+
+    if (execution.citations.length) {
+      await prisma.citation.createMany({
+        data: execution.citations.map((c) => ({
+          agentRunId: run.id,
+          url: c.url,
+          title: c.title,
+          snippet: c.snippet ?? null,
+        })),
       });
-
-      // Şema doğrulaması: model sözleşmeyi bozduysa bu ajan başarısızdır.
-      const parsed = agent.schema.parse(result.json);
-      const latencyMs = Date.now() - began;
-
-      await prisma.agentRun.update({
-        where: { id: run.id },
-        data: {
-          status: "COMPLETED",
-          // Yedeğe düşülmüş olabilir; kayıtta gerçekten kullanılan model durmalı.
-          model,
-          rawJson: parsed as never,
-          promptTokens: result.promptTokens,
-          outputTokens: result.outputTokens,
-          latencyMs,
-          endedAt: new Date(),
-        },
-      });
-
-      if (result.citations.length) {
-        await prisma.citation.createMany({
-          data: result.citations.map((c) => ({
-            agentRunId: run.id,
-            url: c.url,
-            title: c.title,
-            snippet: c.snippet ?? null,
-          })),
-        });
-      }
-
-      await emit(analysisId, "agent.completed", {
-        agentKey: key,
-        name: agent.name,
-        round: agent.round,
-        output: parsed,
-        citations: result.citations,
-        latencyMs,
-      });
-
-      return parsed;
-    } catch (error) {
-      lastError = error;
-
-      // Model kapalı ya da kotasız: aynı modeli tekrar denemek anlamsız.
-      // Önce yedek modelleri dene, hepsi tükenirse grounding'i kapatıp
-      // zinciri baştan yürü. Bu denemeler MAX_ATTEMPTS hakkından sayılmaz.
-      if (error instanceof ModelUnavailableError) {
-        if (modelIndex < models.length - 1) {
-          modelIndex++;
-          attempt--;
-          continue;
-        }
-        if (grounded) {
-          grounded = false;
-          modelIndex = 0;
-          attempt--;
-          await emit(analysisId, "agent.degraded", {
-            agentKey: key,
-            name: agent.name,
-            round: agent.round,
-            reason: "grounding-quota",
-            message:
-              "Google Search kotası yok; bu ajan kaynaklandırma olmadan çalışıyor.",
-          });
-          continue;
-        }
-      }
-
-      const retryable = error instanceof RetryableLlmError;
-      if (!retryable || attempt === MAX_ATTEMPTS) break;
-
-      // Üstel geri çekilme — ücretsiz katmanda 429 beklenen bir durumdur.
-      const backoff = (error as RetryableLlmError).retryAfterMs ?? 1000 * 2 ** attempt;
-      await emit(analysisId, "agent.started", {
-        agentKey: key,
-        name: agent.name,
-        round: agent.round,
-        retryOf: attempt,
-        waitMs: backoff,
-      });
-      await new Promise((resolve) => setTimeout(resolve, backoff));
     }
+
+    await emit(analysisId, "agent.completed", {
+      agentKey: key,
+      name: agent.name,
+      round: agent.round,
+      output: execution.parsed,
+      citations: execution.citations,
+      latencyMs: execution.latencyMs,
+    });
+
+    return execution.parsed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await prisma.agentRun.update({
+      where: { id: run.id },
+      data: {
+        status: "FAILED",
+        errorMessage: message,
+        latencyMs: Date.now() - began,
+        endedAt: new Date(),
+      },
+    });
+    await emit(analysisId, "agent.failed", {
+      agentKey: key,
+      name: agent.name,
+      round: agent.round,
+      error: message,
+    });
+
+    throw error instanceof Error ? error : new Error(message);
   }
-
-  const message = lastError instanceof Error ? lastError.message : String(lastError);
-  await prisma.agentRun.update({
-    where: { id: run.id },
-    data: {
-      status: "FAILED",
-      errorMessage: message,
-      latencyMs: Date.now() - began,
-      endedAt: new Date(),
-    },
-  });
-  await emit(analysisId, "agent.failed", {
-    agentKey: key,
-    name: agent.name,
-    round: agent.round,
-    error: message,
-  });
-
-  throw lastError instanceof Error ? lastError : new Error(message);
 }
 
 /** Tur 1 çıktılarındaki boyut puanlarını Score tablosuna yazar. */
