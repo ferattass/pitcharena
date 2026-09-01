@@ -7,6 +7,8 @@ import { Card, CardBody } from "@/components/ui/card";
 import { AGENT_META, INVESTOR_KEYS, type AgentKey } from "@/lib/agents/meta";
 import type { InvestorOutput } from "@/lib/agents/schemas";
 import { prisma } from "@/lib/db";
+import { readDb } from "@/lib/db-errors";
+import { listOfflineAnalyses } from "@/lib/offline-analyses";
 import { disagreementLabel } from "@/lib/scoring";
 
 export const metadata = { title: "Yatırımcı simülasyonu · PitchArena" };
@@ -19,21 +21,37 @@ export const dynamic = "force-dynamic";
  * fikri onaylıyor, ayrışma nerede yoğunlaşıyor.
  */
 export default async function SimulationPage() {
-  const analyses = await prisma.analysis.findMany({
-    where: { status: "COMPLETED" },
-    orderBy: { createdAt: "desc" },
-    take: 40,
-    select: {
-      id: true,
-      title: true,
-      overallScore: true,
-      disagreement: true,
-      runs: {
-        where: { agentKey: { in: INVESTOR_KEYS }, status: "COMPLETED" },
-        select: { agentKey: true, rawJson: true },
+  const analysesResult = await readDb(
+    prisma.analysis.findMany({
+      where: { status: "COMPLETED" },
+      orderBy: { createdAt: "desc" },
+      take: 40,
+      select: {
+        id: true,
+        title: true,
+        overallScore: true,
+        disagreement: true,
+        runs: {
+          where: { agentKey: { in: INVESTOR_KEYS }, status: "COMPLETED" },
+          select: { agentKey: true, rawJson: true },
+        },
       },
-    },
-  });
+    }),
+    [],
+  );
+  // DB kapalıyken çevrimdışı kayıtlardan aynı şekli üret: yatırımcı
+  // kararları bellekteki analizlerde de duruyor.
+  const analyses = analysesResult.value.length
+    ? analysesResult.value
+    : listOfflineAnalyses(40).map((record) => ({
+        id: record.analysis.id,
+        title: record.analysis.title,
+        overallScore: record.analysis.overallScore,
+        disagreement: record.analysis.disagreement,
+        runs: record.runs
+          .filter((run) => INVESTOR_KEYS.includes(run.agentKey as AgentKey) && run.status === "COMPLETED")
+          .map((run) => ({ agentKey: run.agentKey, rawJson: run.rawJson })),
+      }));
 
   const rows = analyses.map((analysis) => {
     const decisions = {} as Record<AgentKey, InvestorOutput | null>;
@@ -115,6 +133,11 @@ export default async function SimulationPage() {
         <Card>
           <CardBody className="p-10 text-center">
             <p className="text-sm font-medium text-navy-700">Tamamlanmış analiz yok</p>
+            {analysesResult.unavailable && (
+              <p className="mt-2 text-[13px] text-navy-500">
+                Veritabanına erişilemiyor. Simülasyon verisi şu anda yüklenemiyor.
+              </p>
+            )}
             <ButtonLink href="/analysis" variant="primary" className="mt-4">
               İlk analizi çalıştır
             </ButtonLink>

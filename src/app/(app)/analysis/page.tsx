@@ -7,20 +7,24 @@ import { ROUND_AGENTS, ROUND_LABELS, ROUND_SUBTITLES } from "@/lib/agents/meta";
 import { AGENT_META } from "@/lib/agents/meta";
 import { quotaStatus } from "@/lib/analysis";
 import { verdictLabel, verdictVariant } from "@/lib/constants";
+import { listOfflineAnalyses } from "@/lib/offline-analyses";
 import { prisma } from "@/lib/db";
 
 export const metadata = { title: "Yeni analiz · PitchArena" };
 export const dynamic = "force-dynamic";
 
 export default async function AnalysisPage() {
-  const [recent, quota] = await Promise.all([
+  const [recentResult] = await Promise.allSettled([
     prisma.analysis.findMany({
       orderBy: { createdAt: "desc" },
       take: 5,
       select: { id: true, title: true, status: true, verdict: true, overallScore: true },
     }),
-    quotaStatus(),
   ]);
+  const recent = recentResult.status === "fulfilled" ? recentResult.value : [];
+  const offlineRecent = recent.length ? [] : listOfflineAnalyses(5).map((record) => record.analysis);
+  const visibleRecent = recent.length ? recent : offlineRecent;
+  const quota = await quotaStatus();
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-5">
@@ -56,12 +60,12 @@ export default async function AnalysisPage() {
             </CardBody>
           </Card>
 
-          {recent.length > 0 && (
+          {visibleRecent.length > 0 ? (
             <Card>
               <CardBody className="p-5">
                 <h2 className="text-sm font-semibold">Son analizler</h2>
                 <ul className="mt-3 space-y-2">
-                  {recent.map((analysis) => (
+                  {visibleRecent.map((analysis) => (
                     <li key={analysis.id}>
                       <Link
                         href={`/analysis/${analysis.id}`}
@@ -90,6 +94,15 @@ export default async function AnalysisPage() {
                     </li>
                   ))}
                 </ul>
+              </CardBody>
+            </Card>
+          ) : (
+            <Card>
+              <CardBody className="p-5">
+                <h2 className="text-sm font-semibold">Son analizler</h2>
+                <p className="mt-2 text-[13px] leading-relaxed text-navy-500">
+                  Henüz kayıtlı analiz yok ya da veritabanına erişilemiyor.
+                </p>
               </CardBody>
             </Card>
           )}

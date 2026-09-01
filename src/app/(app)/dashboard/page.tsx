@@ -9,6 +9,12 @@ import { verdictHeadline, verdictLabel, verdictVariant } from "@/lib/constants";
 import type { ChairOutput } from "@/lib/agents/schemas";
 import { prisma } from "@/lib/db";
 import { providerStatus } from "@/lib/llm";
+import {
+  listOfflineAnalyses,
+  offlineAggregate,
+  offlineDimensionAverages,
+  offlineLatest,
+} from "@/lib/offline-analyses";
 import { disagreementLabel } from "@/lib/scoring";
 import { cn } from "@/lib/utils";
 
@@ -23,33 +29,52 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default async function DashboardPage() {
-  const [latest, recent, aggregate, dimensionAverages, quota, runningCount] = await Promise.all([
-    prisma.analysis.findFirst({
-      where: { status: "COMPLETED" },
-      orderBy: { createdAt: "desc" },
-      include: { runs: { where: { agentKey: "chair" }, select: { rawJson: true } } },
-    }),
-    prisma.analysis.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 6,
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        verdict: true,
-        overallScore: true,
-        createdAt: true,
-      },
-    }),
-    prisma.analysis.aggregate({
-      where: { status: "COMPLETED" },
-      _avg: { overallScore: true, disagreement: true },
-      _count: { _all: true },
-    }),
-    prisma.score.groupBy({ by: ["dimension"], _avg: { value: true } }),
-    quotaStatus(),
-    prisma.analysis.count({ where: { status: "RUNNING" } }),
-  ]);
+  const [latestResult, recentResult, aggregateResult, dimensionAveragesResult, runningCountResult] =
+    await Promise.allSettled([
+      prisma.analysis.findFirst({
+        where: { status: "COMPLETED" },
+        orderBy: { createdAt: "desc" },
+        include: { runs: { where: { agentKey: "chair" }, select: { rawJson: true } } },
+      }),
+      prisma.analysis.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 6,
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          verdict: true,
+          overallScore: true,
+          createdAt: true,
+        },
+      }),
+      prisma.analysis.aggregate({
+        where: { status: "COMPLETED" },
+        _avg: { overallScore: true, disagreement: true },
+        _count: { _all: true },
+      }),
+      prisma.score.groupBy({ by: ["dimension"], _avg: { value: true } }),
+      prisma.analysis.count({ where: { status: "RUNNING" } }),
+    ]);
+  const quota = await quotaStatus();
+
+  const dbLatest = latestResult.status === "fulfilled" ? latestResult.value : null;
+  const dbRecent = recentResult.status === "fulfilled" ? recentResult.value : [];
+  const dbAggregate =
+    aggregateResult.status === "fulfilled"
+      ? aggregateResult.value
+      : { _avg: { overallScore: null, disagreement: null }, _count: { _all: 0 } };
+  const dbDimensionAverages =
+    dimensionAveragesResult.status === "fulfilled" ? dimensionAveragesResult.value : [];
+  const runningCount = runningCountResult.status === "fulfilled" ? runningCountResult.value : 0;
+
+  // DB kapalıyken panel boş kalmasın: kullanıcının bu oturumda ürettiği
+  // çevrimdışı analizler aynı kartları besler.
+  const offline = dbAggregate._count._all === 0;
+  const latest = dbLatest ?? (offline ? offlineLatest() : null);
+  const recent = dbRecent.length ? dbRecent : offline ? listOfflineAnalyses(6).map((r) => r.analysis) : [];
+  const aggregate = offline ? offlineAggregate() : dbAggregate;
+  const dimensionAverages = offline ? offlineDimensionAverages() : dbDimensionAverages;
 
   const chair = latest?.runs[0]?.rawJson as ChairOutput | null;
   const total = aggregate._count._all;
@@ -161,10 +186,10 @@ export default async function DashboardPage() {
               </>
             ) : (
               <>
-                <h1 className="mt-5 max-w-lg text-3xl font-bold text-navy-900">
+                <h1 className="mt-5 max-w-lg text-3xl font-bold text-white">
                   Henüz bir komite toplanmadı
                 </h1>
-                <p className="mt-3 max-w-lg text-sm leading-relaxed text-navy-500">
+                <p className="mt-3 max-w-lg text-sm leading-relaxed text-navy-200">
                   Fikrini gönder; 11 ajan dört turda tartışsın. Biri fikri öldürmeye, biri
                   savunmaya çalışacak, üç yatırımcı ayrı ayrı karar verecek.
                 </p>

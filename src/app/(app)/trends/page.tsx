@@ -5,6 +5,13 @@ import { AGENT_META, SCORE_DIMENSIONS, type AgentKey } from "@/lib/agents/meta";
 import type { RiskOutput, SkepticOutput } from "@/lib/agents/schemas";
 import { verdictLabel } from "@/lib/constants";
 import { prisma } from "@/lib/db";
+import { readDb } from "@/lib/db-errors";
+import {
+  offlineAgentRuns,
+  offlineAggregate,
+  offlineDimensionAverages,
+  offlineVerdictGroups,
+} from "@/lib/offline-analyses";
 
 export const metadata = { title: "Pazar eğilimleri · PitchArena" };
 export const dynamic = "force-dynamic";
@@ -16,33 +23,59 @@ export const dynamic = "force-dynamic";
  * demo verisi yoktur. Analiz yoksa ekran bunu açıkça söyler.
  */
 export default async function TrendsPage() {
-  const [verdictGroups, dimensionAverages, aggregate, skepticRuns, riskRuns] = await Promise.all([
-    prisma.analysis.groupBy({
-      by: ["verdict"],
-      where: { status: "COMPLETED" },
-      _count: { _all: true },
-    }),
-    prisma.score.groupBy({
-      by: ["dimension"],
-      _avg: { value: true },
-      _count: { _all: true },
-    }),
-    prisma.analysis.aggregate({
-      where: { status: "COMPLETED" },
-      _avg: { overallScore: true, disagreement: true },
-      _count: { _all: true },
-    }),
-    prisma.agentRun.findMany({
-      where: { agentKey: "skeptic", status: "COMPLETED" },
-      select: { rawJson: true },
-      take: 200,
-    }),
-    prisma.agentRun.findMany({
-      where: { agentKey: "risk", status: "COMPLETED" },
-      select: { rawJson: true },
-      take: 200,
-    }),
-  ]);
+  const [verdictGroupsResult, dimensionAveragesResult, aggregateResult, skepticRunsResult, riskRunsResult] =
+    await Promise.all([
+      readDb(
+        prisma.analysis.groupBy({
+          by: ["verdict"],
+          where: { status: "COMPLETED" },
+          _count: { _all: true },
+        }),
+        [],
+      ),
+      readDb(
+        prisma.score.groupBy({
+          by: ["dimension"],
+          _avg: { value: true },
+          _count: { _all: true },
+        }),
+        [],
+      ),
+      readDb(
+        prisma.analysis.aggregate({
+          where: { status: "COMPLETED" },
+          _avg: { overallScore: true, disagreement: true },
+          _count: { _all: true },
+        }),
+        { _avg: { overallScore: null, disagreement: null }, _count: { _all: 0 } },
+      ),
+      readDb(
+        prisma.agentRun.findMany({
+          where: { agentKey: "skeptic", status: "COMPLETED" },
+          select: { rawJson: true },
+          take: 200,
+        }),
+        [],
+      ),
+      readDb(
+        prisma.agentRun.findMany({
+          where: { agentKey: "risk", status: "COMPLETED" },
+          select: { rawJson: true },
+          take: 200,
+        }),
+        [],
+      ),
+    ]);
+
+  // DB'den hiç analiz gelmediyse eğilimleri çevrimdışı kayıtlardan hesapla —
+  // aksi halde kullanıcı kendi ürettiği analizleri bu ekranda hiç göremiyor.
+  const offline = aggregateResult.value._count._all === 0;
+
+  const verdictGroups = offline ? offlineVerdictGroups() : verdictGroupsResult.value;
+  const dimensionAverages = offline ? offlineDimensionAverages() : dimensionAveragesResult.value;
+  const aggregate = offline ? offlineAggregate() : aggregateResult.value;
+  const skepticRuns = offline ? offlineAgentRuns("skeptic") : skepticRunsResult.value;
+  const riskRuns = offline ? offlineAgentRuns("risk") : riskRunsResult.value;
 
   const total = aggregate._count._all;
 

@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
+import { readDb } from "@/lib/db-errors";
 import { readEvents, type AnalysisEvent } from "@/lib/orchestrator/events";
 
 // Akış canlı olmalı; hiçbir katmanda önbelleğe alınmamalı.
@@ -28,8 +29,11 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/api/analyses
   const querySeq = Number(request.nextUrl.searchParams.get("from") ?? "");
   const startSeq = Number.isFinite(headerSeq) && headerSeq > 0 ? headerSeq : Number.isFinite(querySeq) ? querySeq : 0;
 
-  const exists = await prisma.analysis.findUnique({ where: { id }, select: { id: true } });
-  if (!exists) {
+  const existsResult = await readDb(prisma.analysis.findUnique({ where: { id }, select: { id: true } }), null);
+  if (!existsResult.value) {
+    if (existsResult.unavailable) {
+      return new Response("Veritabanına erişilemiyor", { status: 503 });
+    }
     return new Response("Analiz bulunamadı", { status: 404 });
   }
 
@@ -119,11 +123,15 @@ async function followLive(
     // Sunucu yeniden başlamışsa veya analiz bu süreçte hiç başlamadıysa
     // sonsuza kadar beklememek için durumu da kontrol et.
     if (!events.length) {
-      const analysis = await prisma.analysis.findUnique({
-        where: { id: analysisId },
-        select: { status: true },
-      });
-      if (analysis && (analysis.status === "COMPLETED" || analysis.status === "FAILED")) {
+      const analysisResult = await readDb(
+        prisma.analysis.findUnique({
+          where: { id: analysisId },
+          select: { status: true },
+        }),
+        null,
+      );
+      if (analysisResult.unavailable) return;
+      if (analysisResult.value && (analysisResult.value.status === "COMPLETED" || analysisResult.value.status === "FAILED")) {
         const tail = await readEvents(analysisId, lastSeq);
         tail.forEach(send);
         return;

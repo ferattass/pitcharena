@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { isDatabaseUnavailableError } from "@/lib/db-errors";
+import { findOfflineAnalysis } from "@/lib/offline-analyses";
 
 const requestSchema = z.object({ question: z.string().trim().min(4).max(500) });
 
@@ -12,39 +14,79 @@ export async function POST(request: Request, ctx: RouteContext<"/api/analyses/[i
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "Geçerli bir soru yazın." }, { status: 400 });
 
-  const analysis = await prisma.analysis.findUnique({
-    where: { id },
-    include: { runs: { where: { status: "COMPLETED" }, include: { citations: true } }, evidence: true },
-  });
-  if (!analysis) return Response.json({ error: "Analiz bulunamadı." }, { status: 404 });
+  const offline = findOfflineAnalysis(id);
+  if (offline) {
+    const questionTerms = terms(parsed.data.question);
+    const candidates = [
+      ...offline.runs.map((run) => ({
+        title: run.agentKey,
+        text: JSON.stringify(run.rawJson ?? {}),
+        citations: run.citations.map((citation) => ({ url: citation.url, title: citation.title })),
+      })),
+      ...offline.evidence.map((item) => ({
+        title: item.title,
+        text: item.content,
+        citations: item.source ? [{ url: item.source, title: item.title }] : [],
+      })),
+    ]
+      .map((item) => ({ ...item, score: [...terms(item.text)].filter((term) => questionTerms.has(term)).length }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
 
-  const questionTerms = terms(parsed.data.question);
-  const candidates = [
-    ...analysis.runs.map((run) => ({
-      title: run.agentKey,
-      text: JSON.stringify(run.rawJson ?? {}),
-      citations: run.citations.map((citation) => ({ url: citation.url, title: citation.title })),
-    })),
-    ...analysis.evidence.map((item) => ({
-      title: item.title,
-      text: item.content,
-      citations: item.source ? [{ url: item.source, title: item.title }] : [],
-    })),
-  ]
-    .map((item) => ({ ...item, score: [...terms(item.text)].filter((term) => questionTerms.has(term)).length }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
+    const supporting = candidates.filter((item) => item.score > 0);
+    const selected = supporting.length ? supporting : candidates;
+    const answer = selected.length
+      ? selected
+          .map((item) => `${item.title}: ${item.text.replace(/[{}\[\]"]/g, " ").replace(/\s+/g, " ").slice(0, 360)}`)
+          .join("\n\n")
+      : "Komitenin bu soruyu yanıtlayacak yeterli kaydı yok. Data Room'a kanıt ekleyip analizi revize edin.";
 
-  const supporting = candidates.filter((item) => item.score > 0);
-  const selected = supporting.length ? supporting : candidates;
-  const answer = selected.length
-    ? selected
-        .map((item) => `${item.title}: ${item.text.replace(/[{}\[\]"]/g, " ").replace(/\s+/g, " ").slice(0, 360)}`)
-        .join("\n\n")
-    : "Komitenin bu soruyu yanıtlayacak yeterli kaydı yok. Data Room’a kanıt ekleyip analizi revize edin.";
+    return Response.json({
+      answer,
+      citations: [...new Map(selected.flatMap((item) => item.citations).map((citation) => [citation.url, citation])).values()].slice(0, 5),
+    });
+  }
 
-  return Response.json({
-    answer,
-    citations: [...new Map(selected.flatMap((item) => item.citations).map((citation) => [citation.url, citation])).values()].slice(0, 5),
-  });
+  try {
+    const analysis = await prisma.analysis.findUnique({
+      where: { id },
+      include: { runs: { where: { status: "COMPLETED" }, include: { citations: true } }, evidence: true },
+    });
+    if (!analysis) return Response.json({ error: "Analiz bulunamadı." }, { status: 404 });
+
+    const questionTerms = terms(parsed.data.question);
+    const candidates = [
+      ...analysis.runs.map((run) => ({
+        title: run.agentKey,
+        text: JSON.stringify(run.rawJson ?? {}),
+        citations: run.citations.map((citation) => ({ url: citation.url, title: citation.title })),
+      })),
+      ...analysis.evidence.map((item) => ({
+        title: item.title,
+        text: item.content,
+        citations: item.source ? [{ url: item.source, title: item.title }] : [],
+      })),
+    ]
+      .map((item) => ({ ...item, score: [...terms(item.text)].filter((term) => questionTerms.has(term)).length }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+
+    const supporting = candidates.filter((item) => item.score > 0);
+    const selected = supporting.length ? supporting : candidates;
+    const answer = selected.length
+      ? selected
+          .map((item) => `${item.title}: ${item.text.replace(/[{}\[\]"]/g, " ").replace(/\s+/g, " ").slice(0, 360)}`)
+          .join("\n\n")
+      : "Komitenin bu soruyu yanıtlayacak yeterli kaydı yok. Data Room'a kanıt ekleyip analizi revize edin.";
+
+    return Response.json({
+      answer,
+      citations: [...new Map(selected.flatMap((item) => item.citations).map((citation) => [citation.url, citation])).values()].slice(0, 5),
+    });
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      return Response.json({ error: "Veritabanına erişilemiyor." }, { status: 503 });
+    }
+    throw error;
+  }
 }

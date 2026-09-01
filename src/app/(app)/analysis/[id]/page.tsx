@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { CalendarDays, GitBranch, PlayCircle, RotateCcw } from "lucide-react";
 import { LiveAnalysis } from "@/components/analysis/live-analysis";
 import { InvestmentWorkspace } from "@/components/analysis/investment-workspace";
@@ -8,13 +7,20 @@ import { ButtonLink } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { viewFromRows } from "@/lib/analysis-view";
 import { prisma } from "@/lib/db";
+import { readDb } from "@/lib/db-errors";
+import { findOfflineAnalysis } from "@/lib/offline-analyses";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata(props: PageProps<"/analysis/[id]">) {
   const { id } = await props.params;
-  const analysis = await prisma.analysis.findUnique({ where: { id }, select: { title: true } });
-  return { title: analysis ? `${analysis.title} · PitchArena` : "Analiz · PitchArena" };
+  const offline = findOfflineAnalysis(id);
+  if (offline) {
+    return { title: `${offline.analysis.title} · PitchArena` };
+  }
+
+  const result = await readDb(prisma.analysis.findUnique({ where: { id }, select: { title: true } }), null);
+  return { title: result.value ? `${result.value.title} · PitchArena` : "Analiz · PitchArena" };
 }
 
 export default async function AnalysisDetailPage(props: PageProps<"/analysis/[id]">) {
@@ -22,19 +28,87 @@ export default async function AnalysisDetailPage(props: PageProps<"/analysis/[id
   const searchParams = await props.searchParams;
   const replay = searchParams.replay === "1";
 
-  const analysis = await prisma.analysis.findUnique({
-    where: { id },
-    include: {
-      runs: { include: { citations: true } },
-      scores: true,
-      evidence: { orderBy: { createdAt: "asc" } },
-      challenges: { orderBy: { createdAt: "asc" } },
-      children: { select: { id: true, version: true }, orderBy: { version: "asc" } },
-      parent: { select: { id: true, version: true, overallScore: true } },
-    },
-  });
+  const offline = findOfflineAnalysis(id);
+  if (offline) {
+    const analysis = offline.analysis;
+    const view = viewFromRows({ analysis, runs: offline.runs, scores: offline.scores });
 
-  if (!analysis) notFound();
+    return (
+      <div className="mx-auto max-w-[1400px] space-y-5">
+        <Card>
+          <CardBody className="p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  {analysis.version > 1 && (
+                    <Badge variant="outline">
+                      <GitBranch className="size-3" aria-hidden />
+                      v{analysis.version}
+                    </Badge>
+                  )}
+                  <Badge variant="outline">ÇEVRİMDIŞI</Badge>
+                  {analysis.simulated && <Badge variant="goif">SİMÜLASYON</Badge>}
+                </div>
+                <h1 className="mt-2 text-xl font-bold text-navy-900">{analysis.title}</h1>
+                <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-navy-500">
+                  {analysis.ideaText}
+                </p>
+              </div>
+            </div>
+          </CardBody>
+        </Card>
+
+        <LiveAnalysis initial={view} replay={false} />
+        <InvestmentWorkspace
+          analysisId={analysis.id}
+          evidence={offline.evidence}
+          challenges={offline.challenges}
+          citationCount={offline.runs.reduce((total, run) => total + run.citations.length, 0)}
+        />
+      </div>
+    );
+  }
+
+  const analysisResult = await readDb(
+    prisma.analysis.findUnique({
+      where: { id },
+      include: {
+        runs: { include: { citations: true } },
+        scores: true,
+        evidence: { orderBy: { createdAt: "asc" } },
+        challenges: { orderBy: { createdAt: "asc" } },
+        children: { select: { id: true, version: true }, orderBy: { version: "asc" } },
+        parent: { select: { id: true, version: true, overallScore: true } },
+      },
+    }),
+    null,
+  );
+
+  if (!analysisResult.value) {
+    return (
+      <div className="mx-auto max-w-[900px]">
+        <Card>
+          <CardBody className="p-10 text-center">
+            <p className="text-sm font-medium text-navy-700">
+              {analysisResult.unavailable
+                ? "Veritabanına erişilemiyor"
+                : "Analiz bulunamadı"}
+            </p>
+            <p className="mt-2 text-[13px] leading-relaxed text-navy-500">
+              {analysisResult.unavailable
+                ? "Bu analiz kaydı şu anda yüklenemiyor. Bağlantı geri geldiğinde sayfa tekrar açılabilir."
+                : "Geçerli bir analiz ID’siyle tekrar deneyin."}
+            </p>
+            <ButtonLink href="/dashboard" variant="primary" className="mt-5">
+              Panele dön
+            </ButtonLink>
+          </CardBody>
+        </Card>
+      </div>
+    );
+  }
+
+  const analysis = analysisResult.value;
 
   const view = viewFromRows({ analysis, runs: analysis.runs, scores: analysis.scores });
   const finished = analysis.status === "COMPLETED";

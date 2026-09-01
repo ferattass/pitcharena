@@ -48,6 +48,19 @@ export interface AnalysisView {
   activeRound: 1 | 2 | 3 | 4 | null;
 }
 
+/**
+ * Kaynaklandırılması beklenen ama tek atıf getirememiş ajan için uyarı.
+ *
+ * Google Search kotası çoğu ücretsiz hesapta sıfırdır; sistem o durumda ajanı
+ * aramasız çalıştırır. Çıktı yine üretilir ama içindeki sayılar ve şirket
+ * adları doğrulanmamıştır — bunu okuyucudan saklamak analizin en yanıltıcı
+ * hali olurdu.
+ */
+export const SOURCELESS_MESSAGE =
+  "Bu ajan tek kaynak getiremedi (Google Search kotası kapalı). Buradaki sayılar ve " +
+  "şirket adları doğrulanmamış model tahminidir; kritik olanları Data Room'a kanıt " +
+  "ekleyerek doğrulatın.";
+
 export function emptyAgents(): Record<AgentKey, AgentView> {
   const agents = {} as Record<AgentKey, AgentView>;
   for (const key of AGENT_KEYS) {
@@ -95,6 +108,12 @@ export function viewFromRows(input: {
   for (const run of input.runs) {
     const key = run.agentKey as AgentKey;
     if (!agents[key]) continue;
+    // Tamamlanmış ama kaynaksız kalan grounded ajan, aramanın çalışmadığını
+    // gösterir. Bunu söylemezsek kart "kaynaklı" rozetini taşımaya devam eder
+    // ve okuyucu, aslında modelin hafızasından gelen sayıları kaynaklı sanır.
+    const sourceless =
+      AGENT_META[key].grounded && run.status.toLowerCase() === "completed" && !run.citations.length;
+
     agents[key] = {
       key,
       status: run.status.toLowerCase() as AgentStatus,
@@ -102,8 +121,7 @@ export function viewFromRows(input: {
       latencyMs: run.latencyMs,
       citations: run.citations,
       error: run.errorMessage,
-      // Tamamlanmış ama kaynaksız kalan grounded ajan, aramanın çalışmadığını gösterir.
-      degraded: null,
+      degraded: sourceless ? SOURCELESS_MESSAGE : null,
     };
   }
 

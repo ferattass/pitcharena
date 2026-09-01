@@ -1,4 +1,4 @@
-import { Check, ChevronDown, CircleDashed, Globe, Loader2, X } from "lucide-react";
+import { Check, ChevronDown, CircleDashed, Globe, GlobeLock, Loader2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { AGENT_META, type AgentAccent } from "@/lib/agents/meta";
 import type { AgentView } from "@/lib/analysis-view";
@@ -41,15 +41,27 @@ export function AgentCard({ agent, defaultOpen }: { agent: AgentView; defaultOpe
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-2">
             <span className="text-[14px] font-semibold text-navy-900">{meta.name}</span>
-            {meta.grounded && (
-              <span
-                className="inline-flex items-center gap-1 text-[11px] text-navy-400"
-                title="Google Search ile kaynaklandırılır"
-              >
-                <Globe className="size-3" aria-hidden />
-                kaynaklı
-              </span>
-            )}
+            {meta.grounded &&
+              // Rozet niyeti değil gerçekleşeni göstermeli: arama kotası
+              // kapalıyken "kaynaklı" yazmak, doğrulanmamış sayıları
+              // doğrulanmış gibi sunar.
+              (agent.citations.length || !done ? (
+                <span
+                  className="inline-flex items-center gap-1 text-[11px] text-navy-400"
+                  title="Google Search ile kaynaklandırılır"
+                >
+                  <Globe className="size-3" aria-hidden />
+                  kaynaklı
+                </span>
+              ) : (
+                <span
+                  className="inline-flex items-center gap-1 text-[11px] text-verdict-goif"
+                  title="Google Search kotası kapalı; bu ajan aramasız çalıştı"
+                >
+                  <GlobeLock className="size-3" aria-hidden />
+                  kaynaksız
+                </span>
+              ))}
           </span>
           <span className="mt-0.5 block truncate text-[12px] text-navy-500">{meta.incentive}</span>
         </span>

@@ -5,6 +5,8 @@ import { ButtonLink } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { verdictLabel, verdictVariant } from "@/lib/constants";
 import { prisma } from "@/lib/db";
+import { readDb } from "@/lib/db-errors";
+import { listOfflineAnalyses } from "@/lib/offline-analyses";
 import { disagreementLabel } from "@/lib/scoring";
 
 export const metadata = { title: "Kayıtlı raporlar · PitchArena" };
@@ -21,31 +23,51 @@ export default async function ReportsPage(props: PageProps<"/reports">) {
   const searchParams = await props.searchParams;
   const query = typeof searchParams.q === "string" ? searchParams.q.trim() : "";
 
-  const analyses = await prisma.analysis.findMany({
-    where: query
-      ? {
-          OR: [
-            { title: { contains: query, mode: "insensitive" } },
-            { ideaText: { contains: query, mode: "insensitive" } },
-          ],
-        }
-      : undefined,
-    orderBy: { createdAt: "desc" },
-    take: 100,
-    select: {
-      id: true,
-      title: true,
-      status: true,
-      verdict: true,
-      overallScore: true,
-      disagreement: true,
-      simulated: true,
-      version: true,
-      parentId: true,
-      createdAt: true,
-      _count: { select: { runs: true } },
-    },
-  });
+  const analysesResult = await readDb(
+    prisma.analysis.findMany({
+      where: query
+        ? {
+            OR: [
+              { title: { contains: query, mode: "insensitive" } },
+              { ideaText: { contains: query, mode: "insensitive" } },
+            ],
+          }
+        : undefined,
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        verdict: true,
+        overallScore: true,
+        disagreement: true,
+        simulated: true,
+        version: true,
+        parentId: true,
+        createdAt: true,
+        _count: { select: { runs: true } },
+      },
+    }),
+    [],
+  );
+  // DB kapalıyken çevrimdışı kayıtlar listelenir; arama da onlara uygulanır
+  // ki "raporlarım nerede?" sorusu bu ekranda cevapsız kalmasın.
+  const needle = query.toLocaleLowerCase("tr-TR");
+  const offlineMode = analysesResult.value.length === 0 && listOfflineAnalyses(1).length > 0;
+  const analyses = analysesResult.value.length
+    ? analysesResult.value
+    : listOfflineAnalyses(100)
+        .map((record) => ({
+          ...record.analysis,
+          _count: { runs: record.runs.length },
+        }))
+        .filter(
+          (analysis) =>
+            !needle ||
+            analysis.title.toLocaleLowerCase("tr-TR").includes(needle) ||
+            analysis.ideaText.toLocaleLowerCase("tr-TR").includes(needle),
+        );
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-5">
@@ -55,7 +77,11 @@ export default async function ReportsPage(props: PageProps<"/reports">) {
           <p className="mt-1.5 text-sm text-navy-500">
             {query
               ? `"${query}" için ${analyses.length} sonuç.`
-              : "Her analiz tam olarak tekrar oynatılabilir — olaylar kayıtlı tutulur."}
+              : offlineMode
+                ? "Veritabanı kapalı; bu oturumda üretilen çevrimdışı raporlar listeleniyor."
+                : analysesResult.unavailable
+                  ? "Veritabanına erişilemiyor. Raporlar şu anda yüklenemiyor."
+                  : "Her analiz tam olarak tekrar oynatılabilir — olaylar kayıtlı tutulur."}
           </p>
         </div>
         <ButtonLink href="/analysis" variant="primary">
@@ -73,7 +99,9 @@ export default async function ReportsPage(props: PageProps<"/reports">) {
             <p className="mt-1 text-[13px] text-navy-500">
               {query
                 ? "Farklı bir arama deneyin."
-                : "İlk fikrini gönder, komite toplansın."}
+                : analysesResult.unavailable
+                  ? "DB bağlantısı geri geldiğinde kayıtlı raporlar burada görünecek."
+                  : "İlk fikrini gönder, komite toplansın."}
             </p>
             <ButtonLink href="/analysis" variant="primary" className="mt-5">
               Fikir gönder

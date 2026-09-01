@@ -34,6 +34,12 @@ export {
 /** Orkestratörün ajanlara verdiği bağlam. Tur ilerledikçe zenginleşir. */
 export interface AgentContext {
   ideaText: string;
+  /**
+   * Kurucu Data Room'a kanıt sundu mu? `ideaText` içine gömülü olduğu için
+   * ayrıca taşınıyor: ajanın doğrulanabilir bir dayanağı olup olmadığı,
+   * kaynaksız çıktının nasıl işaretleneceğini belirliyor.
+   */
+  hasEvidence?: boolean;
   /** Tur 1 çıktıları, ajan anahtarına göre. Tur 2'den itibaren dolu. */
   round1: Partial<Record<AgentKey, unknown>>;
   skeptic?: SkepticOutput;
