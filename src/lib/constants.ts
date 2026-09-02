@@ -55,7 +55,7 @@ export function decisionLabel(decision: string): string {
     case "FOLLOW_UP":
       return "Takibe alır";
     case "PASS":
-      return "Geçer";
+      return "Pas geçer";
     default:
       return decision;
   }

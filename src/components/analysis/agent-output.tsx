@@ -435,7 +435,7 @@ const DECISION_STYLES: Record<string, string> = {
 };
 
 export function DecisionTag({ decision }: { decision: string }) {
-  const label = decision === "INVEST" ? "YATIRIM" : decision === "FOLLOW_UP" ? "TAKİPTE" : "GEÇER";
+  const label = decision === "INVEST" ? "YATIRIM" : decision === "FOLLOW_UP" ? "TAKİPTE" : "PAS GEÇER";
   return (
     <span
       className={cn(
