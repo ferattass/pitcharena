@@ -72,8 +72,8 @@ describe("ajan çalıştırma merdiveni", () => {
     expect(execution.model).toBe(SIMULATION_MODEL);
     expect(execution.parsed).toBeTruthy();
     expect(degraded).toEqual(["provider-quota"]);
-    // Kotası olmayan modele tek bir çağrı yapılmalı, üç kez denenmemeli.
-    expect(provider.calls).toHaveLength(1);
+    // Birincil ve yedek modeller denendikten sonra simülasyona düşmeli (1 birincil + 2 yedek)
+    expect(provider.calls).toHaveLength(3);
   });
 
   it("kota kilidi kalkınca sonraki ajanlar gerçek sağlayıcıya hiç gitmez", async () => {
@@ -86,7 +86,7 @@ describe("ajan çalıştırma merdiveni", () => {
 
     await executeAgent("risk", ctx());
     // İkinci ajan doğrudan simülasyona gitti: çağrı sayısı artmadı.
-    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls).toHaveLength(3);
   });
 
   it("geçici hatada yeniden dener, sonra simülasyona düşer ama kilidi kaldırmaz", async () => {
@@ -115,7 +115,7 @@ describe("ajan çalıştırma merdiveni", () => {
 
     expect(execution.simulated).toBe(false);
     expect(degraded).toEqual(["grounding-quota"]);
-    expect(provider.calls.map((call) => call.grounded)).toEqual([true, false]);
+    expect(provider.calls.map((call) => call.grounded)).toEqual([true, true, true, false]);
     expect(isLlmUnavailable()).toBe(false);
   });
 
@@ -127,7 +127,8 @@ describe("ajan çalıştırma merdiveni", () => {
 
     await executeAgent("market", ctx());
 
-    const [withSearch, withoutSearch] = provider.calls;
+    const withSearch = provider.calls[0];
+    const withoutSearch = provider.calls.find((c) => !c.grounded)!;
     expect(withSearch.userPrompt).not.toContain("DOĞRULANMIŞ VERİ YOK");
     // Model aramanın kapandığını bilmezse kendini aramış sayıp uydurur.
     expect(withoutSearch.userPrompt).toContain("DOĞRULANMIŞ VERİ YOK");
@@ -183,7 +184,7 @@ describe("ajan çalıştırma merdiveni", () => {
     });
 
     await executeAgent("market", ctx());
-    expect(provider.calls.map((call) => call.grounded)).toEqual([true, false]);
+    expect(provider.calls.map((call) => call.grounded)).toEqual([true, true, true, false]);
 
     const degraded: string[] = [];
     await executeAgent("competitor", ctx(), {
@@ -191,7 +192,7 @@ describe("ajan çalıştırma merdiveni", () => {
     });
 
     // İkinci grounded ajan doğrudan aramasız başladı: yeni bir arama çağrısı yok.
-    expect(provider.calls.map((call) => call.grounded)).toEqual([true, false, false]);
+    expect(provider.calls.map((call) => call.grounded)).toEqual([true, true, true, false, false]);
     expect(degraded).toEqual(["grounding-quota"]);
   });
 
